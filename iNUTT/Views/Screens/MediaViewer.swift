@@ -21,7 +21,7 @@ struct MediaViewer: View {
     var body: some View {
         ZStack {
             Color.black
-                .opacity(1 - min(abs(dragY) / 500, 0.7))
+                .opacity(1 - min(Double(abs(dragY)) / 500.0, 0.7))
                 .ignoresSafeArea()
 
             TabView(selection: $index) {
@@ -33,7 +33,7 @@ struct MediaViewer: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
             .offset(y: dragY)
-            .scaleEffect(1 - min(abs(dragY) / 2000, 0.12))
+            .scaleEffect(1 - min(abs(dragY) / CGFloat(2000), CGFloat(0.12)))
             .simultaneousGesture(dismissDrag)
 
             if chrome {
