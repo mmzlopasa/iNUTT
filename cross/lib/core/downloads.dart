@@ -8,7 +8,6 @@ import 'package:path_provider/path_provider.dart';
 import 'feed_engine.dart';
 import 'models.dart';
 import 'net.dart';
-import 'stores.dart';
 
 class Toast {
   final String message;
@@ -65,19 +64,25 @@ class DownloadManager extends ChangeNotifier {
         name = '${DateTime.now().millisecondsSinceEpoch}_${name.replaceAll(RegExp(r'[^\w.\-]'), '_')}';
         final file = File('${(await _folder()).path}${Platform.pathSeparator}$name');
         await file.writeAsBytes(bytes);
-        if (Platform.isAndroid && AppSettings.shared.saveToGallery) {
-          if (!await Gal.hasAccess()) await Gal.requestAccess();
+        if (Platform.isAndroid) {
+          // The gallery is the only place on Android where the user can find the file.
+          if (!await Gal.hasAccess() && !await Gal.requestAccess()) {
+            show('Allow access to photos to save downloads', success: false);
+            return;
+          }
           if (r.kind == MediaKind.video) {
             await Gal.putVideo(file.path, album: 'iNUTT');
           } else {
             await Gal.putImage(file.path, album: 'iNUTT');
           }
+          try {
+            await file.delete();
+          } catch (_) {}
         }
         saved++;
       }
-      show(Platform.isWindows
-          ? 'Saved to Downloads › iNUTT Downloads'
-          : (AppSettings.shared.saveToGallery ? 'Saved to gallery' : 'Saved to iNUTT Downloads') + (saved > 1 ? ' ($saved)' : ''));
+      final count = saved > 1 ? ' ($saved)' : '';
+      show(Platform.isWindows ? 'Saved to Downloads › iNUTT Downloads$count' : 'Saved to gallery › iNUTT$count');
     } catch (e) {
       show('Download failed', success: false);
     } finally {

@@ -403,18 +403,20 @@ struct EditSiteView: View {
     @EnvironmentObject private var engine: FeedEngine
     @Environment(\.dismiss) private var dismiss
     @State private var draft: Site
+    @State private var link: String
     @State private var confirmDelete = false
 
     init(site: Site) {
         self.site = site
         _draft = State(initialValue: site)
+        _link = State(initialValue: site.url.absoluteString)
     }
 
     var body: some View {
         Form {
             Section("General") {
                 TextField("Name", text: $draft.name)
-                TextField("Link", text: Binding(get: { draft.url.absoluteString }, set: { if let u = SiteStore.normalize($0) { draft.url = u } }))
+                TextField("Link", text: $link)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -457,6 +459,7 @@ struct EditSiteView: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
+                    if let u = SiteStore.normalize(link) { draft.url = u }
                     let urlChanged = draft.url != site.url || draft.renderMode != site.renderMode
                     sites.update(draft)
                     if urlChanged {
@@ -466,6 +469,7 @@ struct EditSiteView: View {
                     }
                     dismiss()
                 }
+                .disabled(SiteStore.normalize(link) == nil)
             }
         }
         .confirmationDialog("Remove \(draft.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {

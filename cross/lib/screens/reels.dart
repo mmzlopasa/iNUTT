@@ -9,8 +9,10 @@ import '../core/downloads.dart';
 import '../core/feed_engine.dart';
 import '../core/models.dart';
 import '../core/net.dart';
+import '../core/security.dart';
 import '../core/stores.dart';
 import '../ui/remote_image.dart';
+import '../ui/router.dart';
 import '../ui/theme.dart';
 
 /// Loads the short videos of the one Reels source and keeps them for an instant start next time.
@@ -56,6 +58,7 @@ class ReelsStore extends ChangeNotifier {
   Future<void> refresh() async {
     final site = this.site;
     if (site == null || loading) return;
+    final source = AppSettings.shared.reelsSource;
     loading = true;
     notifyListeners();
     _rounds = 0;
@@ -88,6 +91,12 @@ class ReelsStore extends ChangeNotifier {
     }
     // The link itself is one reel (a single video page).
     if (list.isEmpty) list = [MediaItem(siteId: site.id, siteName: site.name, title: '', pageUrl: site.url, kind: MediaKind.video)];
+    // The source changed while this one loaded: drop it and load the new one.
+    if (source != AppSettings.shared.reelsSource) {
+      loading = false;
+      unawaited(loadIfNeeded());
+      return;
+    }
     items = list;
     _next = _rounds > 0 ? null : r?.nextPage;
     _loadedSource = AppSettings.shared.reelsSource;
@@ -100,6 +109,7 @@ class ReelsStore extends ChangeNotifier {
   Future<void> loadMore() async {
     final site = this.site;
     if (site == null || loading) return;
+    final source = AppSettings.shared.reelsSource;
     if (_rounds > 0) {
       // Swipe further through the page for the next videos.
       if (_rounds >= 60) return;
@@ -107,6 +117,10 @@ class ReelsStore extends ChangeNotifier {
       _rounds += 10;
       final have = items.map((e) => e.id).toSet();
       final more = await _capture(site, _rounds);
+      if (source != AppSettings.shared.reelsSource) {
+        loading = false;
+        return;
+      }
       items = [...items, ...more.where((e) => !have.contains(e.id))];
       _save();
       loading = false;
@@ -118,6 +132,7 @@ class ReelsStore extends ChangeNotifier {
     loading = true;
     try {
       final r = await FeedEngine.fetchListing(next, site.url, site, null);
+      if (source != AppSettings.shared.reelsSource) throw StateError('source changed');
       final have = items.map((e) => e.id).toSet();
       items = [...items, ...reels(r.items).where((e) => !have.contains(e.id))];
       _next = r.nextPage == next ? null : r.nextPage;
@@ -167,8 +182,7 @@ class ReelsStore extends ChangeNotifier {
 
 /// TikTok-style feed: one full-screen video at a time, swipe up for the next.
 class ReelsView extends StatefulWidget {
-  final bool active;
-  const ReelsView({super.key, required this.active});
+  const ReelsView({super.key});
 
   @override
   State<ReelsView> createState() => _ReelsViewState();
@@ -179,24 +193,37 @@ class _ReelsViewState extends State<ReelsView> {
   int _index = 0;
   String _source = AppSettings.shared.reelsSource;
 
+  /// Playing only while the Reels tab is on screen, the app is open and unlocked.
+  bool _active = false;
+
   @override
   void initState() {
     super.initState();
     AppSettings.shared.addListener(_settingsChanged);
-    if (widget.active) unawaited(ReelsStore.shared.loadIfNeeded());
+    AppRouter.shared.addListener(_activityChanged);
+    LockManager.shared.addListener(_activityChanged);
+    appResumed.addListener(_activityChanged);
+    _active = _shouldPlay;
+    if (_active) unawaited(ReelsStore.shared.loadIfNeeded());
   }
 
-  @override
-  void didUpdateWidget(ReelsView old) {
-    super.didUpdateWidget(old);
-    if (widget.active && !old.active) unawaited(ReelsStore.shared.loadIfNeeded());
-  }
+  bool get _shouldPlay => AppRouter.shared.tab == AppTab.reels && !LockManager.shared.isLocked && appResumed.value;
 
   @override
   void dispose() {
     AppSettings.shared.removeListener(_settingsChanged);
+    AppRouter.shared.removeListener(_activityChanged);
+    LockManager.shared.removeListener(_activityChanged);
+    appResumed.removeListener(_activityChanged);
     _page.dispose();
     super.dispose();
+  }
+
+  void _activityChanged() {
+    final active = _shouldPlay;
+    if (active == _active) return;
+    if (mounted) setState(() => _active = active);
+    if (active) unawaited(ReelsStore.shared.loadIfNeeded());
   }
 
   void _settingsChanged() {
@@ -249,7 +276,7 @@ class _ReelsViewState extends State<ReelsView> {
                 itemBuilder: (context, i) => ReelPage(
                   key: ValueKey(store.items[i].id),
                   item: store.items[i],
-                  active: widget.active && i == _index,
+                  active: _active && i == _index,
                 ),
               ),
               _topBar(context),
@@ -417,6 +444,12 @@ class _ReelPageState extends State<ReelPage> {
     if (!mounted) {
       await p.dispose();
       return;
+    }
+    // The page may have scrolled away while the video opened.
+    if (widget.active && !_paused) {
+      await p.play();
+    } else {
+      await p.pause();
     }
     if (widget.active) Library.shared.record(widget.item);
     setState(() {

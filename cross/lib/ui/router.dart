@@ -17,6 +17,9 @@ enum AppTab {
   const AppTab(this.title, this.icon);
 }
 
+/// False while the app is in the background or the app switcher.
+final appResumed = ValueNotifier<bool>(true);
+
 /// Navigation state of every tab, so any screen (and the viewer) can open a site or category.
 class AppRouter extends ChangeNotifier {
   static final AppRouter shared = AppRouter._();

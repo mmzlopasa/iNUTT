@@ -135,10 +135,8 @@ class _SettingsViewState extends State<SettingsView> {
                 title: 'Downloads & storage',
                 footer: Platform.isWindows
                     ? 'Downloads are saved in Downloads › iNUTT Downloads.'
-                    : 'Downloads are also kept in the app\'s iNUTT Downloads folder.',
+                    : 'Downloads are saved to your gallery in the iNUTT album.',
                 children: [
-                  if (Platform.isAndroid)
-                    SwitchRow(icon: Icons.photo_library_rounded, title: 'Save to gallery', value: s.saveToGallery, onChanged: (v) => s.saveToGallery = v),
                   Row2(
                     icon: Icons.storage_rounded,
                     title: 'Clear cache',
@@ -146,7 +144,7 @@ class _SettingsViewState extends State<SettingsView> {
                     onTap: () async {
                       await ImagePipeline.shared.clear();
                       FeedEngine.shared.clearCache();
-                      setState(() => _cache = 0);
+                      if (mounted) setState(() => _cache = 0);
                     },
                   ),
                 ],

@@ -64,28 +64,30 @@ struct RootView: View {
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: downloads.toast)
         .overlay {
-            if settings.hideInSwitcher && phase != .active && !lock.isLocked {
-                PrivacyCover()
-            }
-        }
-        .overlay {
             if !onboarded {
                 OnboardingView { withAnimation(.easeInOut(duration: 0.3)) { onboarded = true } }
                     .transition(.opacity)
             }
         }
-        .overlay {
-            if lock.isLocked {
-                LockView().transition(.opacity)
-            }
+        .onAppear { updateLock() }
+        .onChange(of: lock.isLocked) { _ in updateLock() }
+        .onChange(of: phase) { p in
+            updateLock()
+            // Face ID can't run while the app is in the background; ask again when it is back.
+            if p == .active && lock.isLocked { Task { await lock.authenticateBiometric() } }
         }
-        .animation(.easeInOut(duration: 0.25), value: lock.isLocked)
         .task {
             guard !didStart else { return }
             didStart = true
             engine.scheduleBackgroundRefresh()
             if engine.isStale { await engine.refreshAll() }
         }
+    }
+}
+
+extension RootView {
+    func updateLock() {
+        LockWindow.shared.update(locked: lock.isLocked, covered: settings.hideInSwitcher && phase != .active)
     }
 }
 

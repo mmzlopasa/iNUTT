@@ -26,11 +26,29 @@ class Disk {
     }
   }
 
-  static Future<void> save(String name, Object value) async {
-    final f = File('${dir.path}${Platform.pathSeparator}$name');
-    final tmp = File('${f.path}.tmp');
-    await tmp.writeAsString(jsonEncode(value));
-    await tmp.rename(f.path);
+  static final Map<String, Future<void>> _pending = {};
+  static int _seq = 0;
+
+  /// Saves one file at a time per name, each through its own temporary file, so quick
+  /// successive saves can never interleave and leave a broken file behind.
+  static Future<void> save(String name, Object value) {
+    final text = jsonEncode(value);
+    final prev = _pending[name] ?? Future<void>.value();
+    final next = prev.then((_) async {
+      final f = File('${dir.path}${Platform.pathSeparator}$name');
+      final tmp = File('${f.path}.${_seq++}.tmp');
+      try {
+        await tmp.writeAsString(text, flush: true);
+        await tmp.rename(f.path);
+      } catch (e) {
+        debugPrint('save $name failed: $e');
+        try {
+          if (tmp.existsSync()) await tmp.delete();
+        } catch (_) {}
+      }
+    });
+    _pending[name] = next;
+    return next;
   }
 }
 

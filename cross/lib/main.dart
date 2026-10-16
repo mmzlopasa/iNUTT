@@ -50,6 +50,8 @@ class INuttApp extends StatelessWidget {
         theme: T.theme(),
         navigatorKey: AppRouter.shared.rootKey,
         scrollBehavior: const _Scroll(),
+        // Lock, privacy cover, onboarding and toasts sit above every route, the viewer included.
+        builder: (context, child) => AppShell(child: child ?? const SizedBox.shrink()),
         home: const RootView(),
       );
 }
@@ -68,31 +70,11 @@ class RootView extends StatefulWidget {
   State<RootView> createState() => _RootViewState();
 }
 
-class _RootViewState extends State<RootView> with WidgetsBindingObserver {
-  AppLifecycleState _life = AppLifecycleState.resumed;
-
+class _RootViewState extends State<RootView> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     if (FeedEngine.shared.isStale) unawaited(FeedEngine.shared.refreshAll());
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    setState(() => _life = state);
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
-      LockManager.shared.lockIfNeeded();
-      FeedEngine.shared.saveNow();
-    } else if (state == AppLifecycleState.resumed && FeedEngine.shared.isStale) {
-      unawaited(FeedEngine.shared.refreshAll());
-    }
   }
 
   Widget _tab(AppTab t, Widget root) => Navigator(
@@ -119,39 +101,87 @@ class _RootViewState extends State<RootView> with WidgetsBindingObserver {
           if (!didPop) _back();
         },
         child: ListenableBuilder(
-          listenable: Listenable.merge([AppRouter.shared, LockManager.shared, DownloadManager.shared, AppSettings.shared]),
+          listenable: AppRouter.shared,
           builder: (context, _) {
             final router = AppRouter.shared;
-            final toast = DownloadManager.shared.toast;
             return Stack(children: [
               const Positioned.fill(child: NightSky()),
               IndexedStack(index: router.tab.index, children: [
                 _tab(AppTab.home, const HomeView()),
-                _tab(AppTab.reels, ReelsView(active: router.tab == AppTab.reels)),
+                _tab(AppTab.reels, const ReelsView()),
                 _tab(AppTab.sites, const SitesView()),
                 _tab(AppTab.search, const SearchView()),
                 _tab(AppTab.favorites, const FavoritesView()),
               ]),
               Positioned(left: 0, right: 0, bottom: 0, child: SafeArea(top: false, child: FloatingTabBar(router: router))),
-              Positioned(
-                top: MediaQuery.paddingOf(context).top + 8,
-                left: 16,
-                right: 16,
-                child: IgnorePointer(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: toast == null ? const SizedBox.shrink() : Center(key: ValueKey(toast.id), child: ToastView(toast: toast)),
-                  ),
-                ),
-              ),
-              if (AppSettings.shared.hideInSwitcher && _life != AppLifecycleState.resumed && !LockManager.shared.isLocked)
-                const Positioned.fill(child: _PrivacyCover()),
-              if (!AppSettings.shared.onboarded)
-                Positioned.fill(child: OnboardingView(onDone: () => AppSettings.shared.onboarded = true)),
-              if (LockManager.shared.isLocked) const Positioned.fill(child: LockView()),
             ]);
           },
         ),
+      );
+}
+
+/// Everything that must cover the whole app, above the navigator and any open viewer or sheet.
+class AppShell extends StatefulWidget {
+  final Widget child;
+  const AppShell({super.key, required this.child});
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
+  AppLifecycleState _life = AppLifecycleState.resumed;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    setState(() => _life = state);
+    appResumed.value = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      LockManager.shared.lockIfNeeded();
+      FeedEngine.shared.saveNow();
+    } else if (state == AppLifecycleState.resumed && FeedEngine.shared.isStale) {
+      unawaited(FeedEngine.shared.refreshAll());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: Listenable.merge([LockManager.shared, DownloadManager.shared, AppSettings.shared]),
+        builder: (context, _) {
+          final toast = DownloadManager.shared.toast;
+          final locked = LockManager.shared.isLocked;
+          return Stack(children: [
+            Positioned.fill(child: widget.child),
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 8,
+              left: 16,
+              right: 16,
+              child: IgnorePointer(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: toast == null ? const SizedBox.shrink() : Center(key: ValueKey(toast.id), child: ToastView(toast: toast)),
+                ),
+              ),
+            ),
+            if (AppSettings.shared.hideInSwitcher && _life != AppLifecycleState.resumed && !locked)
+              const Positioned.fill(child: _PrivacyCover()),
+            if (!AppSettings.shared.onboarded)
+              Positioned.fill(child: OnboardingView(onDone: () => AppSettings.shared.onboarded = true)),
+            if (locked) const Positioned.fill(child: LockView()),
+          ]);
+        },
       );
 }
 

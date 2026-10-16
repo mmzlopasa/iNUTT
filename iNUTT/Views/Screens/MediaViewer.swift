@@ -242,9 +242,12 @@ struct MediaPage: View {
         .onChange(of: isActive) { active in
             if active { if settings.autoplay { player?.play() } } else { player?.pause() }
         }
+        .onAppear {
+            if let p = player, p.currentItem != nil { attachLoop(p) }
+        }
         .onDisappear {
             player?.pause()
-            if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
+            detachLoop()
         }
     }
 
@@ -290,7 +293,9 @@ struct MediaPage: View {
         }
         switch r.kind {
         case .video:
-            if player == nil { player = makePlayer(r) }
+            guard !Task.isCancelled else { return }
+            if player == nil || player?.currentItem == nil { player = Preloader.shared.player(for: item, media: r) }
+            if let p = player { attachLoop(p) }
             player?.currentItem?.preferredForwardBufferDuration = 0
             if isActive && settings.autoplay { player?.play() }
         case .image, .gif:
@@ -300,15 +305,17 @@ struct MediaPage: View {
         }
     }
 
-    private func makePlayer(_ r: ResolvedMedia) -> AVPlayer {
-        let p = Preloader.shared.player(for: item, media: r)
-        if settings.loopVideos, let pi = p.currentItem {
-            loopObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: pi, queue: .main) { _ in
-                p.seek(to: .zero)
-                p.play()
-            }
+    private func attachLoop(_ p: AVPlayer) {
+        guard settings.loopVideos, loopObserver == nil, let pi = p.currentItem else { return }
+        loopObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: pi, queue: .main) { [weak p] _ in
+            p?.seek(to: .zero)
+            p?.play()
         }
-        return p
+    }
+
+    private func detachLoop() {
+        if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
+        loopObserver = nil
     }
 }
 

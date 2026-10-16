@@ -287,6 +287,16 @@ class _MediaPageState extends State<MediaPage> {
         await p.dispose();
         return;
       }
+      // The page may have been swiped away while the video opened.
+      if (widget.isActive && s.autoplay) {
+        await p.play();
+      } else {
+        await p.pause();
+      }
+      if (!mounted) {
+        await p.dispose();
+        return;
+      }
       setState(() {
         _player = p;
         _video = v;

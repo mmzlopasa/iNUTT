@@ -176,6 +176,8 @@ final class FeedEngine: ObservableObject {
                     }
                 }
             }
+            // The site was removed while it loaded.
+            guard SiteStore.shared.site(site.id) != nil else { return }
             let newIDs = Set(r.items.map(\.id))
             var merged = r.items + old.filter { !newIDs.contains($0.id) }
             if merged.count > Limits.maxItemsPerFeed { merged = Array(merged.prefix(Limits.maxItemsPerFeed)) }

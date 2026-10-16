@@ -43,6 +43,7 @@ final class ReelsStore: ObservableObject {
 
     func refresh() async {
         guard let site, !loading else { return }
+        let source = AppSettings.shared.reelsSource
         loading = true
         defer { loading = false }
         captureRounds = 0
@@ -73,6 +74,11 @@ final class ReelsStore: ObservableObject {
         if list.isEmpty {
             list = [MediaItem(siteID: site.id, siteName: site.name, title: "", thumbnailURL: nil, mediaURL: nil, pageURL: site.url, kind: .video)]
         }
+        // The source changed while this one loaded: drop it and load the new one.
+        guard source == AppSettings.shared.reelsSource else {
+            Task { await self.loadIfNeeded() }
+            return
+        }
         items = list
         next = captureRounds > 0 ? nil : r?.nextPage
         loadedSource = AppSettings.shared.reelsSource
@@ -82,14 +88,17 @@ final class ReelsStore: ObservableObject {
 
     func loadMore() async {
         guard let site, !loading else { return }
+        let source = AppSettings.shared.reelsSource
         if captureRounds > 0 {
             // Swipe further through the page for the next videos.
             guard captureRounds < 60 else { return }
             loading = true
             defer { loading = false }
             captureRounds += 10
+            let more = await capture(site, rounds: captureRounds)
+            guard source == AppSettings.shared.reelsSource else { return }
             let have = Set(items.map(\.id))
-            items += await capture(site, rounds: captureRounds).filter { !have.contains($0.id) }
+            items += more.filter { !have.contains($0.id) }
             save()
             return
         }
@@ -100,6 +109,7 @@ final class ReelsStore: ObservableObject {
             self.next = nil
             return
         }
+        guard source == AppSettings.shared.reelsSource else { return }
         let have = Set(items.map(\.id))
         let fresh = Self.reels(r.items).filter { !have.contains($0.id) }
         items += fresh
@@ -137,9 +147,21 @@ final class ReelsStore: ObservableObject {
     }
 }
 
+/// Which reel is on screen and whether the Reels tab is visible. Pages live in their own
+/// hosting controllers, so they follow this shared object instead of a binding.
+@MainActor
+final class ReelsCursor: ObservableObject {
+    static let shared = ReelsCursor()
+    @Published var index = 0
+    @Published var visible = false
+}
+
 /// TikTok-style feed: one full-screen video at a time, swipe up for the next.
 struct ReelsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var router: Router
+    @EnvironmentObject private var lock: LockManager
+    @Environment(\.scenePhase) private var phase
     @ObservedObject private var store = ReelsStore.shared
     @State private var index = 0
     @State private var draft = ""
@@ -173,11 +195,20 @@ struct ReelsView: View {
             }
         }
         .task { await store.loadIfNeeded() }
+        .onAppear { updateVisible() }
+        .onChange(of: router.tab) { _ in updateVisible() }
+        .onChange(of: lock.isLocked) { _ in updateVisible() }
+        .onChange(of: phase) { _ in updateVisible() }
         .onChange(of: settings.reelsSource) { _ in
             index = 0
+            ReelsCursor.shared.index = 0
             Task { await store.loadIfNeeded() }
         }
         .sheet(isPresented: $showSource) { sourceSheet }
+    }
+
+    private func updateVisible() {
+        ReelsCursor.shared.visible = router.tab == .reels && !lock.isLocked && phase == .active
     }
 
     private var topBar: some View {
@@ -273,7 +304,7 @@ struct ReelsPager: UIViewControllerRepresentable {
         init(_ p: ReelsPager) { parent = p }
 
         func page(_ i: Int) -> UIViewController {
-            let page = ReelPage(item: parent.items[i], index: i, current: parent.$index)
+            let page = ReelPage(item: parent.items[i], index: i)
                 .environmentObject(AppSettings.shared)
                 .environmentObject(Library.shared)
                 .environmentObject(DownloadManager.shared)
@@ -298,6 +329,7 @@ struct ReelsPager: UIViewControllerRepresentable {
                                 previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
             guard completed, let i = pvc.viewControllers?.first?.view.tag else { return }
             parent.index = i
+            ReelsCursor.shared.index = i
             UISelectionFeedbackGenerator().selectionChanged()
             Preloader.shared.preload(around: i, in: parent.items)
             if i >= parent.items.count - 4 { parent.onNearEnd() }
@@ -309,8 +341,8 @@ struct ReelsPager: UIViewControllerRepresentable {
 struct ReelPage: View {
     let item: MediaItem
     let index: Int
-    @Binding var current: Int
     // Pages live in their own hosting controllers, which don't inherit the app's environment.
+    @ObservedObject private var cursor = ReelsCursor.shared
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var library = Library.shared
     @State private var player: AVPlayer?
@@ -318,8 +350,9 @@ struct ReelPage: View {
     @State private var paused = false
     @State private var failed = false
     @State private var loopObserver: NSObjectProtocol?
+    @State private var onScreen = false
 
-    private var isActive: Bool { current == index }
+    private var isActive: Bool { cursor.visible && cursor.index == index }
 
     var body: some View {
         ZStack {
@@ -344,17 +377,22 @@ struct ReelPage: View {
         .contentShape(Rectangle())
         .onTapGesture { togglePause() }
         .task { await load() }
-        .onChange(of: current) { _ in
-            if isActive {
-                library.record(item)
-                if !paused { player?.play() }
-            } else {
-                player?.pause()
+        .onChange(of: isActive) { active in
+            if active { library.record(item) }
+            apply()
+        }
+        .onAppear {
+            onScreen = true
+            // .task runs load() again on every appearance and replaces a released player.
+            if let p = player, p.currentItem != nil {
+                attachLoop(p)
+                apply()
             }
         }
         .onDisappear {
+            onScreen = false
             player?.pause()
-            if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
+            detachLoop()
         }
     }
 
@@ -394,27 +432,41 @@ struct ReelPage: View {
     }
 
     private func togglePause() {
-        guard let player else { return }
+        guard player != nil else { return }
         paused.toggle()
-        if paused { player.pause() } else { player.play() }
+        apply()
+    }
+
+    private func apply() {
+        guard let player else { return }
+        if isActive && !paused && onScreen { player.play() } else { player.pause() }
+    }
+
+    private func attachLoop(_ p: AVPlayer) {
+        guard loopObserver == nil, let current = p.currentItem else { return }
+        loopObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: current, queue: .main) { [weak p] _ in
+            p?.seek(to: .zero)
+            p?.play()
+        }
+    }
+
+    private func detachLoop() {
+        if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
+        loopObserver = nil
     }
 
     private func load() async {
         guard let r = await FeedEngine.shared.resolve(item) else { failed = true; return }
+        guard !Task.isCancelled else { return }
         switch r.kind {
         case .video:
-            let p = Preloader.shared.player(for: item, media: r)
+            let p = (player?.currentItem != nil ? player : nil) ?? Preloader.shared.player(for: item, media: r)
             p.isMuted = settings.startMuted
             p.currentItem?.preferredForwardBufferDuration = 0
-            loopObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: p.currentItem, queue: .main) { _ in
-                p.seek(to: .zero)
-                p.play()
-            }
             player = p
-            if isActive {
-                library.record(item)
-                p.play()
-            }
+            if onScreen { attachLoop(p) }
+            if isActive { library.record(item) }
+            apply()
         case .gif, .image:
             image = await ImagePipeline.shared.image(r.url, referer: r.referer, maxPixel: 1600, animated: r.kind == .gif)
             failed = image == nil

@@ -166,6 +166,8 @@ class FeedEngine extends ChangeNotifier {
           }
         }
       }
+      // The site was removed while it loaded.
+      if (SiteStore.shared.site(site.id) == null) return;
       final newIds = r.items.map((e) => e.id).toSet();
       var merged = [...r.items, ...old.where((e) => !newIds.contains(e.id))];
       if (merged.length > Limits.maxItemsPerFeed) merged = merged.sublist(0, Limits.maxItemsPerFeed);

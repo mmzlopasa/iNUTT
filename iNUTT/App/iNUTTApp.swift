@@ -81,6 +81,15 @@ final class ViewerState: ObservableObject {
     /// Opens a tapped item: category tiles navigate to their grid, media opens in the viewer.
     func open(_ items: [MediaItem], at index: Int) {
         guard items.indices.contains(index) else { return }
+        // Opened from inside Settings (History): close that sheet first, or nothing can be shown.
+        if Router.shared.showSettings {
+            Router.shared.showSettings = false
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                self.open(items, at: index)
+            }
+            return
+        }
         let item = items[index]
         if let c = SiteStore.shared.site(item.siteID)?.category(matching: item.pageURL) {
             Router.shared.push(SiteRoute(siteID: item.siteID, category: c))
@@ -112,6 +121,7 @@ final class ViewerState: ObservableObject {
 final class Router: ObservableObject {
     static let shared = Router()
     @Published var tab: AppTab = .home
+    @Published var showSettings = false
     @Published var home = NavigationPath()
     @Published var sites = NavigationPath()
     @Published var search = NavigationPath()
