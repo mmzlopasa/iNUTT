@@ -225,7 +225,12 @@ struct ReelsPager: UIViewControllerRepresentable {
         init(_ p: ReelsPager) { parent = p }
 
         func page(_ i: Int) -> UIViewController {
-            let vc = UIHostingController(rootView: ReelPage(item: parent.items[i], index: i, current: parent.$index))
+            let page = ReelPage(item: parent.items[i], index: i, current: parent.$index)
+                .environmentObject(AppSettings.shared)
+                .environmentObject(Library.shared)
+                .environmentObject(DownloadManager.shared)
+                .ignoresSafeArea()
+            let vc = UIHostingController(rootView: page)
             vc.view.backgroundColor = .black
             vc.view.tag = i
             return vc
@@ -257,7 +262,8 @@ struct ReelPage: View {
     let item: MediaItem
     let index: Int
     @Binding var current: Int
-    @EnvironmentObject private var settings: AppSettings
+    // Pages live in their own hosting controllers, which don't inherit the app's environment.
+    @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var library = Library.shared
     @State private var player: AVPlayer?
     @State private var image: UIImage?
