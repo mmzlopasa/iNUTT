@@ -34,6 +34,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - run: flutter pub get
+      - name: Patch webview plugin for the current Android Gradle plugin
+        # flutter_inappwebview_android 1.1.3 asks for proguard-android.txt, which AGP no longer accepts.
+        run: |
+          find "${PUB_CACHE:-$HOME/.pub-cache}" -path "*flutter_inappwebview_android-*/android/build.gradle" \
+            -exec sed -i "s/proguard-android.txt/proguard-android-optimize.txt/g" {} +
       - run: flutter test
       - run: flutter build apk --release --build-number=${{ github.run_number }}
       - run: cp build/app/outputs/flutter-apk/app-release.apk ../inutt.apk
