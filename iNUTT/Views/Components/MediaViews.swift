@@ -152,10 +152,13 @@ struct MediaContextMenu: View {
 }
 
 struct MediaGrid: View {
+    /// 2 columns on iPhone, 5 on iPad.
+    static var columnCount: Int { UIDevice.current.userInterfaceIdiom == .pad ? 5 : 2 }
+    static var columns: [GridItem] { Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount) }
+
     let items: [MediaItem]
     var onReachEnd: (() -> Void)?
     @EnvironmentObject private var viewer: ViewerState
-    @Environment(\.horizontalSizeClass) private var hSize
 
     private var aspect: CGFloat {
         let videos = items.prefix(30).filter { $0.kind == .video }.count
@@ -163,7 +166,7 @@ struct MediaGrid: View {
     }
 
     var body: some View {
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 12), count: hSize == .regular ? 4 : 2)
+        let cols = MediaGrid.columns
         LazyVGrid(columns: cols, spacing: 12) {
             ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
                 Button {
@@ -175,6 +178,11 @@ struct MediaGrid: View {
                 .contextMenu { MediaContextMenu(item: item) }
                 .onAppear {
                     if idx >= items.count - 6 { onReachEnd?() }
+                    // Warm the next screenful of thumbnails while scrolling.
+                    if idx % 6 == 0 {
+                        let next = items.dropFirst(idx + 1).prefix(18).compactMap { i in i.thumbnailURL.map { ($0, i.referer) } }
+                        ImagePipeline.shared.prefetch(Array(next))
+                    }
                 }
             }
         }

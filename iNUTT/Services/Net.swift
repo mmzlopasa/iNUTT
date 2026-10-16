@@ -123,15 +123,15 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
         if let c = continuations.removeValue(forKey: ObjectIdentifier(web)) { c.resume(returning: ok) }
     }
 
-    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        Task { @MainActor in self.finish(webView, ok: true) }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finish(webView, ok: true)
     }
 
-    nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        Task { @MainActor in self.finish(webView, ok: false) }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(webView, ok: false)
     }
 
-    nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        Task { @MainActor in self.finish(webView, ok: false) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finish(webView, ok: false)
     }
 }

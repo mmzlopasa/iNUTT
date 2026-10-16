@@ -30,7 +30,8 @@ struct ShakeEffect: GeometryEffect {
 struct PinPad: View {
     var onDigit: (String) -> Void
     var onDelete: () -> Void
-    var leftAction: (symbol: String, action: () -> Void)?
+    var leftSymbol: String?
+    var leftAction: (() -> Void)?
 
     private let rows = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"]]
 
@@ -40,9 +41,9 @@ struct PinPad: View {
                 HStack(spacing: 22) { ForEach(row, id: \.self) { key($0) } }
             }
             HStack(spacing: 22) {
-                if let leftAction {
-                    Button(action: leftAction.action) {
-                        Image(systemName: leftAction.symbol).font(.system(size: 26)).foregroundStyle(Theme.gold)
+                if let leftAction, let leftSymbol {
+                    Button(action: leftAction) {
+                        Image(systemName: leftSymbol).font(.system(size: 26)).foregroundStyle(Theme.gold)
                             .frame(width: 76, height: 76)
                     }
                 } else {
@@ -96,8 +97,9 @@ struct LockView: View {
                 if usesPIN {
                     PinDots(count: lock.pinLength, filled: entered.count, shake: shake)
                         .padding(.vertical, 6)
-                    PinPad(onDigit: type, onDelete: { if !entered.isEmpty { entered.removeLast() } },
-                           leftAction: settings.faceIDEnabled ? (symbol: "faceid", action: { Task { await lock.authenticateBiometric() } }) : nil)
+                    PinPad(onDigit: type, onDelete: deleteDigit,
+                           leftSymbol: settings.faceIDEnabled ? "faceid" : nil,
+                           leftAction: biometricTapped)
                 } else {
                     Button {
                         Task {
@@ -117,6 +119,14 @@ struct LockView: View {
             try? await Task.sleep(nanoseconds: 350_000_000)
             await lock.authenticateBiometric()
         }
+    }
+
+    private func deleteDigit() {
+        if !entered.isEmpty { entered.removeLast() }
+    }
+
+    private func biometricTapped() {
+        Task { await lock.authenticateBiometric() }
     }
 
     private func type(_ d: String) {

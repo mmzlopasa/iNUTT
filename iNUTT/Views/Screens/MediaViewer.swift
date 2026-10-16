@@ -57,10 +57,14 @@ struct MediaViewer: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: downloads.toast)
         .statusBarHidden(!chrome)
         .persistentSystemOverlays(chrome ? .automatic : .hidden)
-        .onAppear { library.record(current) }
-        .onChange(of: index) { _ in
+        .onAppear {
+            library.record(current)
+            Preloader.shared.preload(around: index, in: items)
+        }
+        .onChange(of: index) { i in
             zoomed = false
             library.record(current)
+            Preloader.shared.preload(around: i, in: items)
             UISelectionFeedbackGenerator().selectionChanged()
         }
     }
@@ -197,9 +201,15 @@ struct MediaPage: View {
                 case .video:
                     if let player {
                         // Leaves room for the viewer's top and bottom bars so player controls stay reachable.
-                        VideoPlayerView(player: player)
-                            .padding(.top, 60)
-                            .padding(.bottom, 120)
+                        ZStack {
+                            if let t = item.thumbnailURL {
+                                RemoteImage(url: t, referer: item.referer, maxPixel: 600, contentMode: .fit, showsPlaceholder: false)
+                                    .opacity(0.5)
+                            }
+                            VideoPlayerView(player: player)
+                        }
+                        .padding(.top, 60)
+                        .padding(.bottom, 120)
                     } else {
                         placeholder
                     }
@@ -237,12 +247,13 @@ struct MediaPage: View {
 
     private var placeholder: some View {
         ZStack {
+            // The grid thumbnail is already cached, so something is on screen instantly.
             if let t = item.thumbnailURL {
                 RemoteImage(url: t, referer: item.referer, maxPixel: 600, contentMode: .fit, showsPlaceholder: false)
-                    .blur(radius: 8)
-                    .opacity(0.6)
             }
-            ProgressView().tint(Theme.gold).scaleEffect(1.3)
+            ProgressView().tint(Theme.gold).scaleEffect(1.1)
+                .padding(10)
+                .background(Circle().fill(.black.opacity(0.4)))
         }
         .onTapGesture(perform: onTap)
     }
@@ -254,6 +265,7 @@ struct MediaPage: View {
         switch r.kind {
         case .video:
             if player == nil { player = makePlayer(r) }
+            player?.currentItem?.preferredForwardBufferDuration = 0
             if isActive && settings.autoplay { player?.play() }
         case .image, .gif:
             guard r.gallery.count <= 1 else { return }
@@ -263,15 +275,8 @@ struct MediaPage: View {
     }
 
     private func makePlayer(_ r: ResolvedMedia) -> AVPlayer {
-        let asset = AVURLAsset(url: r.url, options: Net.avHeaders(referer: r.referer))
-        let pi = AVPlayerItem(asset: asset)
-        let q = CGFloat(settings.maxQuality)
-        pi.preferredMaximumResolution = CGSize(width: q * 16 / 9, height: q)
-        pi.preferredPeakBitRate = 0
-        let p = AVPlayer(playerItem: pi)
-        p.isMuted = settings.startMuted
-        p.automaticallyWaitsToMinimizeStalling = true
-        if settings.loopVideos {
+        let p = Preloader.shared.player(for: item, media: r)
+        if settings.loopVideos, let pi = p.currentItem {
             loopObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: pi, queue: .main) { _ in
                 p.seek(to: .zero)
                 p.play()

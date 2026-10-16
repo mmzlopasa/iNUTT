@@ -138,7 +138,7 @@ struct HeroCarousel: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 250)
+            .frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 420 : 250)
             HStack(spacing: 6) {
                 ForEach(0..<items.count, id: \.self) { i in
                     Capsule()

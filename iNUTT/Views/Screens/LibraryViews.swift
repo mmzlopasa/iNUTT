@@ -56,7 +56,13 @@ struct HistoryView: View {
         }
     }
 
-    private var grouped: [(String, [HistoryEntry])] {
+    struct DaySection: Identifiable {
+        var title: String
+        var entries: [HistoryEntry]
+        var id: String { title }
+    }
+
+    private var grouped: [DaySection] {
         let cal = Calendar.current
         let f = DateFormatter()
         f.locale = Locale(identifier: "hr_HR")
@@ -71,7 +77,7 @@ struct HistoryView: View {
             if map[label] == nil { order.append(label) }
             map[label, default: []].append(e)
         }
-        return order.map { ($0, map[$0] ?? []) }
+        return order.map { DaySection(title: $0, entries: map[$0] ?? []) }
     }
 
     var body: some View {
@@ -87,9 +93,9 @@ struct HistoryView: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 30)
                     .listRowBackground(Color.clear)
             }
-            ForEach(grouped, id: \.0) { section in
+            ForEach(grouped) { section in
                 Section {
-                    ForEach(section.1) { entry in
+                    ForEach(section.entries) { entry in
                         Button {
                             let all = filtered.map(\.item)
                             let idx = all.firstIndex(of: entry.item) ?? 0
@@ -103,7 +109,7 @@ struct HistoryView: View {
                         }
                     }
                 } header: {
-                    Text(section.0).font(Theme.mono(11)).foregroundStyle(Theme.gold)
+                    Text(section.title).font(Theme.mono(11)).foregroundStyle(Theme.gold)
                 }
             }
         }

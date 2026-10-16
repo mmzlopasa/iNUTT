@@ -40,6 +40,7 @@ jobs:
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             build > build.log 2>&1 || true
           grep -E "error:|BUILD (SUCCEEDED|FAILED)" build.log | sort -u | head -150
+          grep -n -B2 -A12 -E "Stack dump|While (type-checking|evaluating)|Please submit a bug report" build.log | grep -v "swift-frontend  *0x" | head -80 || true
           grep -q "BUILD SUCCEEDED" build.log || { tail -80 build.log; exit 1; }
 
       - name: Package IPA

@@ -28,12 +28,18 @@ struct SearchView: View {
         }
     }
 
-    private var matchingCategories: [(Site, SiteCategory)] {
+    struct CategoryHit: Identifiable {
+        var site: Site
+        var category: SiteCategory
+        var id: String { site.id.uuidString + category.id }
+    }
+
+    private var matchingCategories: [CategoryHit] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        var out: [(Site, SiteCategory)] = []
+        var out: [CategoryHit] = []
         for s in sites.enabledSites {
             for c in s.categories where q.isEmpty || c.name.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
-                out.append((s, c))
+                out.append(CategoryHit(site: s, category: c))
             }
         }
         return Array(out.prefix(q.isEmpty ? 30 : 60))
@@ -150,11 +156,11 @@ struct SearchView: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "Kategorije", subtitle: "sa svih stranica")
             FlowLayout(spacing: 8) {
-                ForEach(matchingCategories, id: \.1.id) { pair in
-                    NavigationLink(value: SiteRoute(siteID: pair.0.id, category: pair.1)) {
+                ForEach(matchingCategories) { pair in
+                    NavigationLink(value: SiteRoute(siteID: pair.site.id, category: pair.category)) {
                         HStack(spacing: 6) {
-                            Text(pair.1.name).font(Theme.text(13, .medium)).foregroundStyle(Theme.ink)
-                            Text(pair.0.name).font(Theme.mono(9)).foregroundStyle(Theme.muted)
+                            Text(pair.category.name).font(Theme.text(13, .medium)).foregroundStyle(Theme.ink)
+                            Text(pair.site.name).font(Theme.mono(9)).foregroundStyle(Theme.muted)
                         }
                         .padding(.horizontal, 12)
                         .frame(height: 34)

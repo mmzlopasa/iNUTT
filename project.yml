@@ -57,6 +57,7 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
+        CADisableMinimumFrameDurationOnPhone: true
         UIAppFonts:
           - Sora-Regular.ttf
           - Sora-SemiBold.ttf

@@ -149,8 +149,8 @@ struct SiteDetailView: View {
                 let key = FeedEngine.key(current, category)
                 if items.isEmpty {
                     if engine.loading.contains(key) {
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                            ForEach(0..<6, id: \.self) { _ in
+                        LazyVGrid(columns: MediaGrid.columns, spacing: 12) {
+                            ForEach(0..<(MediaGrid.columnCount * 3), id: \.self) { _ in
                                 Shimmer().aspectRatio(4 / 5, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                             }
                         }
