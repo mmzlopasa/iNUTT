@@ -49,7 +49,7 @@ final class FeedEngine: ObservableObject {
         let maxLen = lists.map(\.count).max() ?? 0
         for i in 0..<maxLen {
             for l in lists where i < l.count {
-                if seen.insert(l[i].id).inserted { out.append(l[i]) }
+                if l[i].isListing != true, seen.insert(l[i].id).inserted { out.append(l[i]) }
             }
         }
         return out
@@ -122,6 +122,18 @@ final class FeedEngine: ObservableObject {
                 }
             }
             errors[key] = nil
+            // Tiles that link to one of the site's categories open that category, never an image.
+            let known = Set((r.categories + (SiteStore.shared.site(site.id)?.categories ?? [])).map(\.url.matchKey))
+            if !known.isEmpty {
+                if category == nil {
+                    r.items.removeAll { $0.pageURL.map { known.contains($0.matchKey) } ?? false }
+                    old.removeAll { $0.pageURL.map { known.contains($0.matchKey) } ?? false }
+                } else {
+                    for i in r.items.indices where r.items[i].pageURL.map({ known.contains($0.matchKey) }) ?? false {
+                        r.items[i].isListing = true
+                    }
+                }
+            }
             let newIDs = Set(r.items.map(\.id))
             var merged = r.items + old.filter { !newIDs.contains($0.id) }
             if merged.count > Limits.maxItemsPerFeed { merged = Array(merged.prefix(Limits.maxItemsPerFeed)) }

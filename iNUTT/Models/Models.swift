@@ -134,6 +134,24 @@ struct ResolvedMedia: Hashable {
     var isListing = false
 }
 
+extension URL {
+    /// Compares links regardless of scheme, "www.", case and a trailing slash.
+    var matchKey: String {
+        var s = (host ?? "").lowercased().replacingOccurrences(of: "www.", with: "") + path.lowercased()
+        while s.hasSuffix("/") { s.removeLast() }
+        if let q = query, !q.isEmpty { s += "?" + q }
+        return s
+    }
+}
+
+extension Site {
+    /// The category a link points to, when it is one of this site's categories.
+    func category(matching url: URL?) -> SiteCategory? {
+        guard let key = url?.matchKey else { return nil }
+        return categories.first { $0.url.matchKey == key }
+    }
+}
+
 enum Limits {
     static let maxSites = 50
     static let maxItemsPerFeed = 400

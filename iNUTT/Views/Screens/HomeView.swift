@@ -206,9 +206,10 @@ struct SiteRow: View {
                 SectionHeader(title: site.name, subtitle: site.host.uppercased(), actionTitle: "All", action: onOpen)
             }
             .padding(.horizontal, 16)
-            if items.isEmpty && !site.categories.isEmpty {
+            if !site.categories.isEmpty {
                 CategoryRow(site: site, categories: Array(site.categories.prefix(20)))
-            } else if items.isEmpty {
+            }
+            if items.isEmpty && site.categories.isEmpty {
                 Group {
                     if engine.loading.contains(FeedEngine.key(site)) {
                         Shimmer().frame(height: 150)
@@ -220,7 +221,7 @@ struct SiteRow: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .padding(.horizontal, 16)
-            } else {
+            } else if !items.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { i, item in

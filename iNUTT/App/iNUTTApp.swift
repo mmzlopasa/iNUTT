@@ -82,6 +82,10 @@ final class ViewerState: ObservableObject {
     func open(_ items: [MediaItem], at index: Int) {
         guard items.indices.contains(index) else { return }
         let item = items[index]
+        if let c = SiteStore.shared.site(item.siteID)?.category(matching: item.pageURL) {
+            Router.shared.push(SiteRoute(siteID: item.siteID, category: c))
+            return
+        }
         if item.isListing == true, let c = item.asCategory {
             Router.shared.push(SiteRoute(siteID: item.siteID, category: c))
             return

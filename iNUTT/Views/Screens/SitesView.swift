@@ -62,6 +62,7 @@ struct SiteCard: View {
 
     var body: some View {
         let items = engine.items(site)
+        let previews = previewThumbs(items)
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 SiteIcon(site: site, size: 44)
@@ -79,27 +80,39 @@ struct SiteCard: View {
                 }
             }
             HStack(spacing: 6) {
-                ForEach(items.prefix(4)) { item in
-                    RemoteImage(url: item.thumbnailURL, referer: item.referer, maxPixel: 300)
+                ForEach(previews) { p in
+                    // Color.clear sets the size, so wide thumbnails can't push the card off screen.
+                    Color.clear
                         .frame(maxWidth: .infinity)
                         .frame(height: 64)
+                        .overlay(RemoteImage(url: p.url, referer: site.url, maxPixel: 300))
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-                if items.isEmpty {
+                if previews.isEmpty {
                     Shimmer().frame(height: 64).clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
             }
             HStack(spacing: 14) {
                 stat("square.stack.fill", "\(items.count)")
                 stat("folder.fill", "\(site.categories.count) cat.")
-                Spacer()
+                Spacer(minLength: 8)
                 if let d = site.lastRefreshed {
-                    Text(d.relativeHR).font(Theme.mono(10)).foregroundStyle(Theme.muted)
+                    Text(d.relativeHR).font(Theme.mono(10)).foregroundStyle(Theme.muted).lineLimit(1)
                 }
             }
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(radius: 22)
+    }
+
+    private struct Preview: Identifiable { var id: String; var url: URL }
+
+    /// Up to four thumbnails: latest items first, then category covers.
+    private func previewThumbs(_ items: [MediaItem]) -> [Preview] {
+        var out = items.compactMap { i in i.thumbnailURL.map { Preview(id: i.id, url: $0) } }
+        out += site.categories.compactMap { c in c.thumbnailURL.map { Preview(id: c.id, url: $0) } }
+        return Array(out.prefix(4))
     }
 
     private func stat(_ symbol: String, _ text: String) -> some View {
