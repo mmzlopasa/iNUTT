@@ -17,6 +17,7 @@ import 'screens/reels.dart';
 import 'screens/search.dart';
 import 'screens/settings.dart';
 import 'screens/sites.dart';
+import 'screens/social.dart';
 import 'ui/media_widgets.dart';
 import 'ui/router.dart';
 import 'ui/theme.dart';
@@ -100,8 +101,9 @@ class _RootViewState extends State<RootView> with WidgetsBindingObserver {
         onGenerateRoute: (_) => MaterialPageRoute<void>(builder: (_) => root),
       );
 
-  void _back() {
+  Future<void> _back() async {
     final r = AppRouter.shared;
+    if (r.tab == AppTab.social && await SocialState.shared.goBack()) return;
     final nav = r.keys[r.tab]?.currentState;
     if (nav != null && nav.canPop()) {
       nav.pop();
@@ -128,6 +130,7 @@ class _RootViewState extends State<RootView> with WidgetsBindingObserver {
               IndexedStack(index: router.tab.index, children: [
                 _tab(AppTab.home, const HomeView()),
                 _tab(AppTab.reels, ReelsView(active: router.tab == AppTab.reels)),
+                _tab(AppTab.social, const SocialView()),
                 _tab(AppTab.sites, const SitesView()),
                 _tab(AppTab.search, const SearchView()),
                 _tab(AppTab.favorites, const FavoritesView()),
