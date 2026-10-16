@@ -76,6 +76,10 @@ final class SiteStore: ObservableObject {
     static func normalize(_ raw: String) -> URL? {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s.isEmpty else { return nil }
+        // "r/pics", "/r/pics", "u/name" and "reddit.com/..." all mean Reddit.
+        let lower = s.lowercased()
+        if lower.hasPrefix("r/") || lower.hasPrefix("u/") || lower.hasPrefix("user/") { s = "https://www.reddit.com/" + s }
+        else if lower.hasPrefix("/r/") || lower.hasPrefix("/u/") { s = "https://www.reddit.com" + s }
         if !s.lowercased().hasPrefix("http://") && !s.lowercased().hasPrefix("https://") { s = "https://" + s }
         guard let u = URL(string: s) ?? URL(string: s.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? ""),
               let host = u.host, host.contains(".") else { return nil }

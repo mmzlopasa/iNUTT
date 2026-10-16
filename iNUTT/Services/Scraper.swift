@@ -279,78 +279,152 @@ enum Scraper {
 
     static func isReddit(_ url: URL) -> Bool { url.host?.lowercased().contains("reddit.com") == true }
 
-    static func redditJSONURL(for url: URL, after: String? = nil, search: String? = nil) -> URL? {
+    static func redditJSONURL(for url: URL, after: String? = nil, search: String? = nil, host: String = "www.reddit.com") -> URL? {
         var path = url.path
-        if path.hasSuffix("/") { path.removeLast() }
+        while path.hasSuffix("/") { path.removeLast() }
+        if path.hasSuffix(".json") { path.removeLast(5) }
         var comps = URLComponents()
         comps.scheme = "https"
-        comps.host = "www.reddit.com"
-        var query = [URLQueryItem(name: "raw_json", value: "1"), URLQueryItem(name: "limit", value: "100")]
+        comps.host = host
+        // Keep options such as ?t=week from the original link.
+        let kept = (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? [])
+            .filter { !["raw_json", "limit", "after", "q", "restrict_sr"].contains($0.name) }
+        var query = [URLQueryItem(name: "raw_json", value: "1"), URLQueryItem(name: "limit", value: "100")] + kept
         if let search {
             comps.path = path + "/search.json"
-            query += [URLQueryItem(name: "q", value: search), URLQueryItem(name: "restrict_sr", value: "1")]
+            query += [URLQueryItem(name: "q", value: search), URLQueryItem(name: "restrict_sr", value: path.isEmpty ? "0" : "1")]
         } else {
-            comps.path = (path.isEmpty ? "" : path) + ".json"
+            comps.path = (path.isEmpty ? "/" : path) + ".json"
         }
         if let after { query.append(URLQueryItem(name: "after", value: after)) }
         comps.queryItems = query
         return comps.url
     }
 
+    /// Sort orders shown as categories for a subreddit or user.
+    static func redditCategories(for url: URL) -> [SiteCategory] {
+        var path = url.path
+        while path.hasSuffix("/") { path.removeLast() }
+        // Strip a sort the link may already include.
+        for sort in ["/hot", "/new", "/top", "/rising", "/controversial"] where path.hasSuffix(sort) { path.removeLast(sort.count) }
+        let base = "https://www.reddit.com" + path
+        let sorts: [(String, String)] = [("Hot", "/hot/"), ("New", "/new/"), ("Top today", "/top/?t=day"), ("Top this week", "/top/?t=week"),
+                                         ("Top this month", "/top/?t=month"), ("Top this year", "/top/?t=year"), ("Top of all time", "/top/?t=all")]
+        return sorts.compactMap { name, suffix in URL(string: base + suffix).map { SiteCategory(name: name, url: $0) } }
+    }
+
+    /// The playable media of one Reddit post.
+    struct RedditMedia {
+        var media: URL?
+        var kind: MediaKind
+        var thumb: URL?
+        var gallery: [URL] = []
+    }
+
+    static func redditMedia(_ post: [String: Any]) -> RedditMedia? {
+        // Crossposts carry their media on the original post.
+        var p = post
+        if p["media"] == nil || p["media"] is NSNull, p["is_gallery"] as? Bool != true,
+           let parent = (p["crosspost_parent_list"] as? [[String: Any]])?.first {
+            p = parent
+        }
+        var thumb: URL?
+        if let preview = p["preview"] as? [String: Any], let imgs = preview["images"] as? [[String: Any]], let first = imgs.first {
+            if let res = first["resolutions"] as? [[String: Any]], let mid = res.last(where: { ($0["width"] as? Int ?? 0) <= 640 }) ?? res.last {
+                thumb = (mid["url"] as? String).flatMap(URL.init(string:))
+            }
+            if thumb == nil, let src = first["source"] as? [String: Any] { thumb = (src["url"] as? String).flatMap(URL.init(string:)) }
+        }
+        if thumb == nil, let t = p["thumbnail"] as? String, t.hasPrefix("http") { thumb = URL(string: t) }
+
+        let urlStr = p["url_overridden_by_dest"] as? String ?? p["url"] as? String
+        let link = urlStr.flatMap(URL.init(string:))
+        var out = RedditMedia(media: link, kind: MediaKind.guess(from: link) ?? .image, thumb: thumb)
+
+        let secure = p["secure_media"] as? [String: Any] ?? p["media"] as? [String: Any]
+        if let rv = (p["media"] as? [String: Any])?["reddit_video"] as? [String: Any] ?? secure?["reddit_video"] as? [String: Any] {
+            out.media = (rv["hls_url"] as? String ?? rv["fallback_url"] as? String).flatMap(URL.init(string:))
+            out.kind = .video
+        } else if let preview = p["preview"] as? [String: Any], let rv = preview["reddit_video_preview"] as? [String: Any] {
+            out.media = (rv["hls_url"] as? String ?? rv["fallback_url"] as? String).flatMap(URL.init(string:))
+            out.kind = .video
+        } else if let m = link, m.pathExtension.lowercased() == "gifv" {
+            out.media = URL(string: m.absoluteString.replacingOccurrences(of: ".gifv", with: ".mp4"))
+            out.kind = .video
+        } else if p["is_gallery"] as? Bool == true, let meta = p["media_metadata"] as? [String: Any] {
+            let order = ((p["gallery_data"] as? [String: Any])?["items"] as? [[String: Any]])?.compactMap { $0["media_id"] as? String } ?? Array(meta.keys)
+            var anyGif = false
+            for id in order {
+                guard let m = meta[id] as? [String: Any], let s = m["s"] as? [String: Any] else { continue }
+                if let u = (s["u"] as? String ?? s["gif"] as? String).flatMap(URL.init(string:)) {
+                    out.gallery.append(u)
+                    if s["gif"] != nil { anyGif = true }
+                }
+                if out.thumb == nil, let small = (m["p"] as? [[String: Any]])?.last(where: { ($0["x"] as? Int ?? 0) <= 640 }),
+                   let u = (small["u"] as? String).flatMap(URL.init(string:)) { out.thumb = u }
+            }
+            guard !out.gallery.isEmpty else { return nil }
+            out.media = out.gallery[0]
+            out.kind = anyGif && out.gallery.count == 1 ? .gif : .image
+        } else if let hint = p["post_hint"] as? String, hint == "image", let m = link {
+            out.media = m
+            out.kind = MediaKind.guess(from: m) ?? .image
+        } else if MediaKind.guess(from: link) == nil {
+            // Links to other hosts (Redgifs, Imgur pages…): resolved when opened.
+            guard out.thumb != nil else { return nil }
+            out.media = nil
+            let host = link?.host?.lowercased() ?? ""
+            if p["post_hint"] as? String == "rich:video" || host.contains("redgifs") || host.contains("gfycat") || host.contains("streamable") || host.contains("youtu") {
+                out.kind = .video
+            }
+        }
+        if out.media == nil && out.thumb == nil { return nil }
+        return out
+    }
+
     static func parseReddit(data: Data, listingURL: URL, site: Site, categoryName: String?) -> ScrapeResult {
         var result = ScrapeResult()
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let d = root["data"] as? [String: Any],
+        let json = try? JSONSerialization.jsonObject(with: data)
+        // A post page returns [post listing, comments]; a subreddit returns one listing.
+        let listing = (json as? [String: Any]) ?? (json as? [[String: Any]])?.first
+        guard let d = listing?["data"] as? [String: Any],
               let children = d["children"] as? [[String: Any]] else { return result }
         for child in children {
-            guard let p = child["data"] as? [String: Any] else { continue }
-            let title = p["title"] as? String ?? ""
+            guard child["kind"] as? String != "t1", let p = child["data"] as? [String: Any],
+                  let rm = redditMedia(p) else { continue }
+            let title = HTML.decodeEntities(p["title"] as? String ?? "")
             let permalink = (p["permalink"] as? String).flatMap { URL(string: "https://www.reddit.com" + $0) }
-            var thumb: URL?
-            if let preview = p["preview"] as? [String: Any], let imgs = preview["images"] as? [[String: Any]], let first = imgs.first {
-                if let res = first["resolutions"] as? [[String: Any]], let mid = res.last(where: { ($0["width"] as? Int ?? 0) <= 640 }) ?? res.last {
-                    thumb = (mid["url"] as? String).flatMap(URL.init(string:))
-                }
-                if thumb == nil, let src = first["source"] as? [String: Any] { thumb = (src["url"] as? String).flatMap(URL.init(string:)) }
+            var item = MediaItem(siteID: site.id, siteName: site.name, title: title,
+                                 thumbnailURL: rm.thumb ?? (rm.kind == .video ? nil : rm.media),
+                                 mediaURL: rm.media, pageURL: rm.media == nil ? permalink : nil,
+                                 kind: rm.kind, categoryName: categoryName ?? (p["subreddit_name_prefixed"] as? String))
+            if rm.gallery.count > 1 { item.gallery = rm.gallery }
+            if rm.media == nil, let link = (p["url_overridden_by_dest"] as? String).flatMap(URL.init(string:)) {
+                // Open the external page directly; it holds the actual media.
+                item.pageURL = link
             }
-            if thumb == nil, let t = p["thumbnail"] as? String, t.hasPrefix("http") { thumb = URL(string: t) }
-
-            let urlStr = p["url_overridden_by_dest"] as? String ?? p["url"] as? String
-            var media = urlStr.flatMap(URL.init(string:))
-            var kind = MediaKind.guess(from: media) ?? .image
-
-            if let isVideo = p["is_video"] as? Bool, isVideo,
-               let m = p["media"] as? [String: Any], let rv = m["reddit_video"] as? [String: Any] {
-                media = (rv["hls_url"] as? String ?? rv["fallback_url"] as? String).flatMap(URL.init(string:))
-                kind = .video
-            } else if let preview = p["preview"] as? [String: Any], let rv = preview["reddit_video_preview"] as? [String: Any] {
-                media = (rv["hls_url"] as? String ?? rv["fallback_url"] as? String).flatMap(URL.init(string:))
-                kind = .video
-            } else if let m = media, m.pathExtension.lowercased() == "gifv" {
-                media = URL(string: m.absoluteString.replacingOccurrences(of: ".gifv", with: ".mp4"))
-                kind = .video
-            } else if p["is_gallery"] as? Bool == true, let meta = p["media_metadata"] as? [String: Any] {
-                let order = ((p["gallery_data"] as? [String: Any])?["items"] as? [[String: Any]])?.compactMap { $0["media_id"] as? String } ?? Array(meta.keys)
-                let first = order.first.flatMap { meta[$0] as? [String: Any] }
-                if let s = first?["s"] as? [String: Any], let u = (s["u"] as? String ?? s["gif"] as? String).flatMap(URL.init(string:)) {
-                    media = u
-                    kind = s["gif"] != nil ? .gif : .image
-                }
-            } else if MediaKind.guess(from: media) == nil {
-                // Link posts without direct media: open the permalink later.
-                if thumb == nil { continue }
-                media = nil
-            }
-            if media == nil && thumb == nil { continue }
-            var item = MediaItem(siteID: site.id, siteName: site.name, title: title, thumbnailURL: thumb ?? (kind == .video ? nil : media),
-                                 mediaURL: media, pageURL: media == nil ? permalink : nil, kind: kind, categoryName: categoryName)
             item.id = MediaItem.hash(permalink?.absoluteString ?? item.id)
             result.items.append(item)
         }
         if let after = d["after"] as? String {
             result.nextPage = redditJSONURL(for: listingURL, after: after)
         }
+        if Scraper.isRedditListing(listingURL) {
+            result.categories = redditCategories(for: listingURL)
+            let parts = listingURL.path.split(separator: "/")
+            result.title = parts.prefix(2).joined(separator: "/")
+        } else {
+            result.title = "Reddit"
+        }
+        result.iconURL = URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png")
         return result
+    }
+
+    /// A subreddit or user page (has sort orders), not the front page or a single post.
+    static func isRedditListing(_ url: URL) -> Bool {
+        let parts = url.path.split(separator: "/").map { $0.lowercased() }
+        guard parts.count >= 2, ["r", "u", "user"].contains(parts[0]) else { return false }
+        return !parts.contains("comments")
     }
 
     // MARK: - Helpers

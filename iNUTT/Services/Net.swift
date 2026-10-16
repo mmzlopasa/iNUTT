@@ -65,6 +65,34 @@ enum Net {
         return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
     }
 
+    /// Reddit asks apps for a descriptive user agent and answers browsers less reliably.
+    static let redditUserAgent = "ios:dev.scyde.inutt:v1.0 (by /u/inutt_app)"
+
+    /// Reddit JSON, trying www and old.reddit.com; adult subreddits need the over18 cookie.
+    static func redditJSON(_ jsonURL: URL) async throws -> Data {
+        var lastError: Error = NetError.empty
+        for host in ["www.reddit.com", "old.reddit.com"] {
+            guard var comps = URLComponents(url: jsonURL, resolvingAgainstBaseURL: false) else { continue }
+            comps.host = host
+            guard let u = comps.url else { continue }
+            var req = URLRequest(url: u, cachePolicy: .reloadRevalidatingCacheData)
+            req.setValue(redditUserAgent, forHTTPHeaderField: "User-Agent")
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.setValue("over18=1", forHTTPHeaderField: "Cookie")
+            do {
+                let (data, resp) = try await session.data(for: req)
+                if let code = (resp as? HTTPURLResponse)?.statusCode, code >= 400 { throw NetError.badStatus(code) }
+                // Blocked requests come back as an HTML page.
+                guard let first = data.first(where: { !($0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09) }),
+                      first == UInt8(ascii: "{") || first == UInt8(ascii: "[") else { throw NetError.empty }
+                return data
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
+    }
+
     /// Headers AVPlayer should send so hot-link protected media plays.
     static func avHeaders(referer: URL?) -> [String: Any] {
         var h: [String: String] = ["User-Agent": userAgent]

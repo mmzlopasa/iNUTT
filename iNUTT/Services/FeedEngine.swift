@@ -103,7 +103,7 @@ final class FeedEngine: ObservableObject {
             var old = feeds[key] ?? []
             // Tiles that open more items (categories, albums) must not be shown as single images.
             var probe = listingProbe[key]
-            if probe == nil, allowRender { probe = await Self.probeListingTiles(r, site: site) }
+            if probe == nil, allowRender, !Scraper.isReddit(site.url) { probe = await Self.probeListingTiles(r, site: site) }
             if let probe {
                 listingProbe[key] = probe
                 if probe {
@@ -198,8 +198,24 @@ final class FeedEngine: ObservableObject {
     nonisolated static func fetchListing(url: URL, base: URL, site: Site, categoryName: String?, allowRender: Bool) async throws -> ScrapeResult {
         if Scraper.isReddit(url) {
             let jsonURL = url.path.hasSuffix(".json") ? url : (Scraper.redditJSONURL(for: url) ?? url)
-            let (data, _) = try await Net.fetch(jsonURL)
-            return Scraper.parseReddit(data: data, listingURL: base, site: site, categoryName: categoryName)
+            do {
+                let data = try await Net.redditJSON(jsonURL)
+                return Scraper.parseReddit(data: data, listingURL: base, site: site, categoryName: categoryName)
+            } catch {
+                // JSON refused: the RSS feed of the same page still lists images and thumbnails.
+                var path = url.path
+                if path.hasSuffix(".json") { path.removeLast(5) }
+                while path.hasSuffix("/") { path.removeLast() }
+                var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                comps?.host = "www.reddit.com"
+                comps?.path = path + "/.rss"
+                comps?.queryItems = comps?.queryItems?.filter { $0.name == "t" || $0.name == "q" || $0.name == "after" }
+                guard let rss = comps?.url, let (data, resp) = try? await Net.fetch(rss) else { throw error }
+                var r = Scraper.parseFeed(xml: Net.text(data, response: resp), baseURL: rss, site: site, categoryName: categoryName)
+                if r.items.isEmpty { throw error }
+                if Scraper.isRedditListing(base) { r.categories = Scraper.redditCategories(for: base) }
+                return r
+            }
         }
         var result = ScrapeResult()
         var staticOK = false
@@ -284,7 +300,18 @@ final class FeedEngine: ObservableObject {
         let maxQ = AppSettings.shared.maxQuality
         var result: ResolvedMedia?
 
-        if let m = item.mediaURL {
+        if let g = item.gallery, g.count > 1 {
+            result = ResolvedMedia(url: g[0], kind: .image, gallery: g, referer: nil)
+        } else if let page = item.pageURL, Scraper.isReddit(page), item.mediaURL == nil,
+                  let data = try? await Net.redditJSON(Scraper.redditJSONURL(for: page) ?? page),
+                  let post = Scraper.parseReddit(data: data, listingURL: page, site: SiteStore.shared.site(item.siteID) ?? Site(name: item.siteName, url: page), categoryName: nil).items.first,
+                  post.mediaURL != nil || post.gallery != nil {
+            if let g = post.gallery, g.count > 1 {
+                result = ResolvedMedia(url: g[0], kind: .image, gallery: g, referer: nil)
+            } else if let m = post.mediaURL {
+                result = ResolvedMedia(url: m, kind: post.kind, referer: nil)
+            }
+        } else if let m = item.mediaURL {
             var url = m
             var kind = MediaKind.guess(from: m) ?? item.kind
             if m.pathExtension.lowercased() == "gifv", let mp4 = URL(string: m.absoluteString.replacingOccurrences(of: ".gifv", with: ".mp4")) {

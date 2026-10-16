@@ -239,7 +239,7 @@ struct AddSiteView: View {
                             .font(Theme.mono(14))
                         TextField("Name (optional)", text: $name)
                     } header: { Text("Site link") } footer: {
-                        Text("A category page, RSS feed or subreddit works too.")
+                        Text("A category page, RSS feed or subreddit (r/name) works too.")
                     }
                     .listRowBackground(Theme.navy.opacity(0.6))
 

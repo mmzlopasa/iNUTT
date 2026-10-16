@@ -47,6 +47,8 @@ struct MediaItem: Codable, Identifiable, Hashable {
     var addedAt: Date
     /// True when the link leads to a list of more items (a category or album), not to one media file.
     var isListing: Bool?
+    /// Every image of a multi-image post (Reddit galleries).
+    var gallery: [URL]?
 
     init(siteID: UUID, siteName: String, title: String, thumbnailURL: URL?, mediaURL: URL?, pageURL: URL?,
          kind: MediaKind, duration: String? = nil, categoryName: String? = nil, addedAt: Date = Date()) {
