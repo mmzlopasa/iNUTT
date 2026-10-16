@@ -114,6 +114,8 @@ class _HomeViewState extends State<HomeView> {
           _circle(Icons.history_rounded, () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const HistoryView()))),
           const SizedBox(width: 8),
           _circle(Icons.add_rounded, () => _add(context)),
+          const SizedBox(width: 8),
+          _circle(Icons.settings_rounded, () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsView()))),
         ]),
       );
 

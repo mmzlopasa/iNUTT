@@ -123,7 +123,7 @@ final class Router: ObservableObject {
         case .search: search.append(route)
         case .favorites: favorites.append(route)
         case .sites: sites.append(route)
-        case .settings, .reels, .social:
+        case .reels:
             tab = .sites
             sites.append(route)
         }

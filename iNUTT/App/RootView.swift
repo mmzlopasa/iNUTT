@@ -1,18 +1,16 @@
 import SwiftUI
 
 enum AppTab: Int, CaseIterable, Identifiable {
-    case home, reels, social, sites, search, favorites, settings
+    case home, reels, sites, search, favorites
     var id: Int { rawValue }
 
     var title: String {
         switch self {
         case .home: return "Home"
         case .reels: return "Reels"
-        case .social: return "Social"
         case .sites: return "Sites"
         case .search: return "Search"
         case .favorites: return "Favorites"
-        case .settings: return "Settings"
         }
     }
 
@@ -20,11 +18,9 @@ enum AppTab: Int, CaseIterable, Identifiable {
         switch self {
         case .home: return "house.fill"
         case .reels: return "play.rectangle.on.rectangle.fill"
-        case .social: return "person.2.fill"
         case .sites: return "square.grid.2x2.fill"
         case .search: return "magnifyingglass"
         case .favorites: return "heart.fill"
-        case .settings: return "gearshape.fill"
         }
     }
 }
@@ -44,11 +40,9 @@ struct RootView: View {
             TabView(selection: $router.tab) {
                 HomeView().tag(AppTab.home).toolbar(.hidden, for: .tabBar)
                 ReelsView().tag(AppTab.reels).toolbar(.hidden, for: .tabBar)
-                SocialView().tag(AppTab.social).toolbar(.hidden, for: .tabBar)
                 SitesView().tag(AppTab.sites).toolbar(.hidden, for: .tabBar)
                 SearchView().tag(AppTab.search).toolbar(.hidden, for: .tabBar)
                 FavoritesView().tag(AppTab.favorites).toolbar(.hidden, for: .tabBar)
-                SettingsView().tag(AppTab.settings).toolbar(.hidden, for: .tabBar)
             }
             FloatingTabBar(selection: $router.tab)
                 .padding(.bottom, 6)

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -147,4 +148,122 @@ class PageRenderer {
       } catch (_) {}
     }
   }
+
+  /// Opens a TikTok-style page off screen, swipes through its feed and collects every video it loads:
+  /// `<video>` sources and video files the page requests. `rounds` is how many screens to swipe.
+  Future<List<CapturedVideo>> captureVideos(Uri url, {int rounds = 10}) {
+    final c = Completer<List<CapturedVideo>>();
+    _queue = _queue.then((_) async => c.complete(await _capture(url, rounds)), onError: (_) => c.complete(const []));
+    return c.future;
+  }
+
+  Future<List<CapturedVideo>> _capture(Uri url, int rounds) async {
+    final loaded = Completer<InAppWebViewController?>();
+    HeadlessInAppWebView? web;
+    final found = <CapturedVideo>[];
+    final keys = <String>{};
+    try {
+      web = HeadlessInAppWebView(
+        initialUrlRequest: URLRequest(url: WebUri.uri(url)),
+        initialSize: const Size(390, 844),
+        initialSettings: InAppWebViewSettings(
+          userAgent: Net.userAgent,
+          mediaPlaybackRequiresUserGesture: false,
+          allowsInlineMediaPlayback: true,
+          javaScriptEnabled: true,
+        ),
+        onLoadStop: (c, _) {
+          if (!loaded.isCompleted) loaded.complete(c);
+        },
+        onReceivedError: (c, req, err) {
+          if (req.isForMainFrame == true && !loaded.isCompleted) loaded.complete(null);
+        },
+      );
+      await web.run();
+      final c = await loaded.future.timeout(const Duration(seconds: 18), onTimeout: () => web?.webViewController);
+      if (c == null) return found;
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      for (var round = 0; round <= rounds; round++) {
+        if (round > 0) {
+          await c.evaluateJavascript(source: _swipeScript);
+          await Future<void>.delayed(const Duration(milliseconds: 900));
+        }
+        final page = await c.getUrl();
+        final json = await c.evaluateJavascript(source: _collectScript);
+        if (json is! String) continue;
+        final list = jsonDecode(json);
+        if (list is! List) continue;
+        for (final v in list.whereType<Map>()) {
+          final raw = v['u'] as String?;
+          if (raw == null) continue;
+          final base = page ?? url;
+          final u = Uri.tryParse(raw);
+          if (u == null) continue;
+          final abs = base.resolveUri(u);
+          final key = videoKey(abs);
+          if (!keys.add(key)) continue;
+          final p = v['p'] as String? ?? '';
+          final pu = p.isEmpty ? null : Uri.tryParse(p);
+          found.add(CapturedVideo(abs, pu == null ? null : base.resolveUri(pu), v['t'] as String? ?? ''));
+        }
+      }
+    } catch (e) {
+      debugPrint('capture failed: $e');
+    } finally {
+      try {
+        await web?.dispose();
+      } catch (_) {}
+    }
+    return found;
+  }
+
+  /// HLS variants of one video share a folder; count them once.
+  static String videoKey(Uri u) {
+    final path = u.path;
+    if (path.toLowerCase().endsWith('.m3u8')) {
+      final i = path.lastIndexOf('/');
+      return u.host + (i > 0 ? path.substring(0, i) : path);
+    }
+    return u.host + path;
+  }
+
+  static const _collectScript = r"""
+(function(){
+  var out=[], seen={};
+  function add(u,p,t){ if(!u||u.indexOf('blob:')===0||u.indexOf('data:')===0||seen[u])return; seen[u]=1; out.push({u:String(u),p:String(p||''),t:String(t||'')}); }
+  document.querySelectorAll('video').forEach(function(v){
+    v.muted=true; v.preload='auto';
+    var p=v.poster||v.getAttribute('data-poster')||'';
+    var box=v.closest('article,li,section,[class*=item],[class*=card],[class*=reel],[class*=short],[class*=video],[class*=post]');
+    var t=box&&box.innerText?box.innerText.trim().split('\n')[0].slice(0,140):'';
+    add(v.currentSrc||v.src||v.getAttribute('data-src'),p,t);
+    v.querySelectorAll('source').forEach(function(s){ add(s.src||s.getAttribute('data-src'),p,t); });
+  });
+  (performance.getEntriesByType('resource')||[]).forEach(function(e){
+    var n=e.name; if(/\.(mp4|m3u8|webm|mov)(\?|#|$)/i.test(n)) add(n,'','');
+  });
+  return JSON.stringify(out);
+})()
+""";
+
+  static const _swipeScript = r"""
+(function(){
+  var h=window.innerHeight;
+  document.querySelectorAll('*').forEach(function(e){
+    var s=getComputedStyle(e);
+    if((s.overflowY==='auto'||s.overflowY==='scroll')&&e.scrollHeight>e.clientHeight+50) e.scrollTop+=e.clientHeight||h;
+  });
+  window.scrollBy(0,h);
+  document.querySelectorAll('video').forEach(function(v){ v.muted=true; var r=v.getBoundingClientRect(); if(r.top<h&&r.bottom>0){ try{v.play();}catch(e){} } });
+  return 1;
+})()
+""";
+}
+
+/// One video found while playing through a page.
+class CapturedVideo {
+  final Uri url;
+  final Uri? poster;
+  final String title;
+  const CapturedVideo(this.url, this.poster, this.title);
 }

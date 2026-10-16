@@ -13,12 +13,13 @@ final class ReelsStore: ObservableObject {
     private var next: URL?
     private var loadedSource = ""
 
-    private struct Snapshot: Codable { var source: String; var items: [MediaItem]; var next: URL? }
+    private struct Snapshot: Codable { var source: String; var items: [MediaItem]; var next: URL?; var rounds: Int? }
 
     private init() {
         if let s = Disk.load(Snapshot.self, "reels.json"), s.source == AppSettings.shared.reelsSource {
             items = s.items
             next = s.next
+            captureRounds = s.rounds ?? 0
             loadedSource = s.source
         }
     }
@@ -35,6 +36,7 @@ final class ReelsStore: ObservableObject {
         if loadedSource != AppSettings.shared.reelsSource {
             items = []
             next = nil
+            captureRounds = 0
         }
         if items.isEmpty { await refresh() }
     }
@@ -43,9 +45,20 @@ final class ReelsStore: ObservableObject {
         guard let site, !loading else { return }
         loading = true
         defer { loading = false }
-        do {
-            let r = try await FeedEngine.fetchListing(url: site.url, base: site.url, site: site, categoryName: nil, allowRender: true)
-            var list = Self.reels(r.items)
+        captureRounds = 0
+        let r = try? await FeedEngine.fetchListing(url: site.url, base: site.url, site: site, categoryName: nil, allowRender: true)
+        var list: [MediaItem] = []
+        let strong = (r?.items ?? []).filter { $0.isListing != true && ($0.kind == .video || $0.kind == .gif || $0.duration != nil) }
+        // TikTok-style pages load their videos while you swipe: play through the page and keep what it loads.
+        if strong.count < 6 {
+            let captured = await capture(site, rounds: 10)
+            if captured.count >= 2 {
+                list = captured
+                captureRounds = 10
+            }
+        }
+        if list.isEmpty, let r {
+            list = Self.reels(r.items)
             // A page of categories: play the first ones.
             if list.count < 4 {
                 for c in r.categories.prefix(3) {
@@ -55,22 +68,32 @@ final class ReelsStore: ObservableObject {
                     }
                 }
             }
-            // The link itself is one reel (a single video page).
-            if list.isEmpty {
-                list = [MediaItem(siteID: site.id, siteName: site.name, title: "", thumbnailURL: nil, mediaURL: nil, pageURL: site.url, kind: .video)]
-            }
-            items = list
-            next = r.nextPage
-            loadedSource = AppSettings.shared.reelsSource
-            error = list.isEmpty ? "No videos found at this link. Try a subreddit with videos, e.g. r/TikTokCringe." : nil
-            save()
-        } catch {
-            if items.isEmpty { self.error = error.localizedDescription }
         }
+        // The link itself is one reel (a single video page).
+        if list.isEmpty {
+            list = [MediaItem(siteID: site.id, siteName: site.name, title: "", thumbnailURL: nil, mediaURL: nil, pageURL: site.url, kind: .video)]
+        }
+        items = list
+        next = captureRounds > 0 ? nil : r?.nextPage
+        loadedSource = AppSettings.shared.reelsSource
+        error = nil
+        save()
     }
 
     func loadMore() async {
-        guard let site, let next, !loading else { return }
+        guard let site, !loading else { return }
+        if captureRounds > 0 {
+            // Swipe further through the page for the next videos.
+            guard captureRounds < 60 else { return }
+            loading = true
+            defer { loading = false }
+            captureRounds += 10
+            let have = Set(items.map(\.id))
+            items += await capture(site, rounds: captureRounds).filter { !have.contains($0.id) }
+            save()
+            return
+        }
+        guard let next else { return }
         loading = true
         defer { loading = false }
         guard let r = try? await FeedEngine.fetchListing(url: next, base: site.url, site: site, categoryName: nil, allowRender: true) else {
@@ -82,6 +105,18 @@ final class ReelsStore: ObservableObject {
         items += fresh
         self.next = (r.nextPage == next) ? nil : r.nextPage
         save()
+    }
+
+    private var captureRounds = 0
+
+    private func capture(_ site: Site, rounds: Int) async -> [MediaItem] {
+        await PageRenderer.shared.captureVideos(site.url, rounds: rounds).map { v in
+            var item = MediaItem(siteID: site.id, siteName: site.name, title: v.title, thumbnailURL: v.poster,
+                                 mediaURL: v.url, pageURL: site.url, kind: .video)
+            // Every video comes from the same page; tell them apart by their file.
+            item.id = MediaItem.hash(v.url.absoluteString)
+            return item
+        }
     }
 
     /// Videos, GIFs, and post links that may hold one, from any site. Post links are treated as
@@ -98,7 +133,7 @@ final class ReelsStore: ObservableObject {
     }
 
     private func save() {
-        Disk.save(Snapshot(source: loadedSource, items: Array(items.prefix(300)), next: next), "reels.json")
+        Disk.save(Snapshot(source: loadedSource, items: Array(items.prefix(300)), next: next, rounds: captureRounds), "reels.json")
     }
 }
 

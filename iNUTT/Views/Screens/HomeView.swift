@@ -7,6 +7,7 @@ struct HomeView: View {
     @State private var filter: MediaKind?
     @State private var showAdd = false
     @State private var showHistory = false
+    @State private var showSettings = false
     @EnvironmentObject private var router: Router
 
     private var enabled: [Site] { sites.enabledSites }
@@ -61,6 +62,17 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showHistory) { HistoryView() }
         }
         .sheet(isPresented: $showAdd) { AddSiteView() }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .environmentObject(AppSettings.shared)
+                .environmentObject(sites)
+                .environmentObject(Library.shared)
+                .environmentObject(LockManager.shared)
+                .environmentObject(engine)
+                .environmentObject(DownloadManager.shared)
+                .environmentObject(router)
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var header: some View {
@@ -75,6 +87,7 @@ struct HomeView: View {
             }
             circleButton("clock.arrow.circlepath") { showHistory = true }
             circleButton("plus") { showAdd = true }
+            circleButton("gearshape.fill") { showSettings = true }
         }
         .padding(.horizontal, 16)
     }

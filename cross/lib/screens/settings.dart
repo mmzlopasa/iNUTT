@@ -46,9 +46,23 @@ class _SettingsViewState extends State<SettingsView> {
                 bottom: false,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('SETTINGS', style: T.mono(11, spacing: 1.2)),
-                    const Wordmark(size: 30),
+                  child: Row(children: [
+                    if (Navigator.of(context).canPop()) ...[
+                      Pressable(
+                        onTap: () => Navigator.of(context).pop(),
+                        child: Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.06), border: Border.all(color: T.line2)),
+                          child: const Icon(Icons.chevron_left_rounded, color: T.ink),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('SETTINGS', style: T.mono(11, spacing: 1.2)),
+                      const Wordmark(size: 30),
+                    ]),
                   ]),
                 ),
               ),

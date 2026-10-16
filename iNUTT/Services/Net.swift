@@ -147,6 +147,98 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
         return html
     }
 
+    /// One video found while playing through a page.
+    struct CapturedVideo { let url: URL; let poster: URL?; let title: String }
+
+    /// Opens a TikTok-style page off screen, swipes through its feed and collects every video it loads:
+    /// `<video>` sources and video files the page requests. `rounds` is how many screens to swipe.
+    func captureVideos(_ url: URL, rounds: Int = 10) async -> [CapturedVideo] {
+        while active >= maxActive { try? await Task.sleep(nanoseconds: 200_000_000) }
+        active += 1
+        defer { active -= 1 }
+
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+        config.websiteDataStore = .default()
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
+        web.customUserAgent = Net.userAgent
+        web.navigationDelegate = self
+        web.isUserInteractionEnabled = false
+        web.alpha = 0.01
+        let host = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows.first }.first
+        host?.insertSubview(web, at: 0)
+        defer { web.stopLoading(); web.removeFromSuperview() }
+
+        web.load(Net.request(url))
+        let ok = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+            continuations[ObjectIdentifier(web)] = c
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 18_000_000_000)
+                self.finish(web, ok: false)
+            }
+        }
+        if !ok && web.url == nil { return [] }
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+
+        var found: [CapturedVideo] = []
+        var keys = Set<String>()
+        for round in 0...rounds {
+            if round > 0 {
+                _ = try? await web.evaluateJavaScript(Self.swipeScript)
+                try? await Task.sleep(nanoseconds: 900_000_000)
+            }
+            guard let json = try? await web.evaluateJavaScript(Self.collectScript) as? String,
+                  let list = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: String]] else { continue }
+            for v in list {
+                guard let raw = v["u"], let u = URL(string: raw, relativeTo: web.url)?.absoluteURL else { continue }
+                let key = Self.videoKey(u)
+                guard !keys.contains(key) else { continue }
+                keys.insert(key)
+                let poster = v["p"].flatMap { $0.isEmpty ? nil : URL(string: $0, relativeTo: web.url)?.absoluteURL }
+                found.append(CapturedVideo(url: u, poster: poster, title: v["t"] ?? ""))
+            }
+        }
+        return found
+    }
+
+    /// HLS variants of one video share a folder; count them once.
+    static func videoKey(_ u: URL) -> String {
+        u.pathExtension.lowercased() == "m3u8" ? (u.host ?? "") + u.deletingLastPathComponent().path : (u.host ?? "") + u.path
+    }
+
+    static let collectScript = """
+    (function(){
+      var out=[], seen={};
+      function add(u,p,t){ if(!u||u.indexOf('blob:')===0||u.indexOf('data:')===0||seen[u])return; seen[u]=1; out.push({u:String(u),p:String(p||''),t:String(t||'')}); }
+      document.querySelectorAll('video').forEach(function(v){
+        v.muted=true; v.preload='auto';
+        var p=v.poster||v.getAttribute('data-poster')||'';
+        var box=v.closest('article,li,section,[class*=item],[class*=card],[class*=reel],[class*=short],[class*=video],[class*=post]');
+        var t=box&&box.innerText?box.innerText.trim().split('\n')[0].slice(0,140):'';
+        add(v.currentSrc||v.src||v.getAttribute('data-src'),p,t);
+        v.querySelectorAll('source').forEach(function(s){ add(s.src||s.getAttribute('data-src'),p,t); });
+      });
+      (performance.getEntriesByType('resource')||[]).forEach(function(e){
+        var n=e.name; if(/\.(mp4|m3u8|webm|mov)(\?|#|$)/i.test(n)) add(n,'','');
+      });
+      return JSON.stringify(out);
+    })()
+    """
+
+    static let swipeScript = """
+    (function(){
+      var h=window.innerHeight;
+      document.querySelectorAll('*').forEach(function(e){
+        var s=getComputedStyle(e);
+        if((s.overflowY==='auto'||s.overflowY==='scroll')&&e.scrollHeight>e.clientHeight+50) e.scrollTop+=e.clientHeight||h;
+      });
+      window.scrollBy(0,h);
+      document.querySelectorAll('video').forEach(function(v){ v.muted=true; var r=v.getBoundingClientRect(); if(r.top<h&&r.bottom>0){ try{v.play();}catch(e){} } });
+      return 1;
+    })()
+    """
+
     private func finish(_ web: WKWebView, ok: Bool) {
         if let c = continuations.removeValue(forKey: ObjectIdentifier(web)) { c.resume(returning: ok) }
     }

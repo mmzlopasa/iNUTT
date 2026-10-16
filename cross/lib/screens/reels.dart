@@ -22,6 +22,7 @@ class ReelsStore extends ChangeNotifier {
       items = (j['items'] as List? ?? []).map((e) => MediaItem.fromJson(e as Map<String, dynamic>)).toList();
       _next = j['next'] == null ? null : Uri.tryParse(j['next'] as String);
       _loadedSource = j['source'] as String;
+      _rounds = j['rounds'] as int? ?? 0;
     }
   }
 
@@ -30,6 +31,7 @@ class ReelsStore extends ChangeNotifier {
   String? error;
   Uri? _next;
   String _loadedSource = '';
+  int _rounds = 0;
 
   Uri? get sourceUrl => SiteStore.normalize(AppSettings.shared.reelsSource);
 
@@ -44,6 +46,7 @@ class ReelsStore extends ChangeNotifier {
     if (_loadedSource != AppSettings.shared.reelsSource) {
       items = [];
       _next = null;
+      _rounds = 0;
       error = null;
       notifyListeners();
     }
@@ -55,9 +58,23 @@ class ReelsStore extends ChangeNotifier {
     if (site == null || loading) return;
     loading = true;
     notifyListeners();
+    _rounds = 0;
+    ScrapeResult? r;
     try {
-      final r = await FeedEngine.fetchListing(site.url, site.url, site, null);
-      var list = reels(r.items);
+      r = await FeedEngine.fetchListing(site.url, site.url, site, null);
+    } catch (_) {}
+    var list = <MediaItem>[];
+    final strong = (r?.items ?? []).where((i) => !i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif || i.duration != null));
+    // TikTok-style pages load their videos while you swipe: play through the page and keep what it loads.
+    if (strong.length < 6) {
+      final captured = await _capture(site, 10);
+      if (captured.length >= 2) {
+        list = captured;
+        _rounds = 10;
+      }
+    }
+    if (list.isEmpty && r != null) {
+      list = reels(r.items);
       // A page of categories: play the first ones.
       if (list.length < 4) {
         for (final c in r.categories.take(3)) {
@@ -68,24 +85,36 @@ class ReelsStore extends ChangeNotifier {
           } catch (_) {}
         }
       }
-      // The link itself is one reel (a single video page).
-      if (list.isEmpty) list = [MediaItem(siteId: site.id, siteName: site.name, title: '', pageUrl: site.url, kind: MediaKind.video)];
-      items = list;
-      _next = r.nextPage;
-      _loadedSource = AppSettings.shared.reelsSource;
-      error = list.isEmpty ? 'No videos found at this link. Try a subreddit with videos, e.g. r/TikTokCringe.' : null;
-      _save();
-    } catch (e) {
-      if (items.isEmpty) error = 'Couldn\'t load this source. Check the link and your connection.';
     }
+    // The link itself is one reel (a single video page).
+    if (list.isEmpty) list = [MediaItem(siteId: site.id, siteName: site.name, title: '', pageUrl: site.url, kind: MediaKind.video)];
+    items = list;
+    _next = _rounds > 0 ? null : r?.nextPage;
+    _loadedSource = AppSettings.shared.reelsSource;
+    error = null;
+    _save();
     loading = false;
     notifyListeners();
   }
 
   Future<void> loadMore() async {
     final site = this.site;
+    if (site == null || loading) return;
+    if (_rounds > 0) {
+      // Swipe further through the page for the next videos.
+      if (_rounds >= 60) return;
+      loading = true;
+      _rounds += 10;
+      final have = items.map((e) => e.id).toSet();
+      final more = await _capture(site, _rounds);
+      items = [...items, ...more.where((e) => !have.contains(e.id))];
+      _save();
+      loading = false;
+      notifyListeners();
+      return;
+    }
     final next = _next;
-    if (site == null || next == null || loading) return;
+    if (next == null) return;
     loading = true;
     try {
       final r = await FeedEngine.fetchListing(next, site.url, site, null);
@@ -98,6 +127,24 @@ class ReelsStore extends ChangeNotifier {
     }
     loading = false;
     notifyListeners();
+  }
+
+  Future<List<MediaItem>> _capture(Site site, int rounds) async {
+    final found = await PageRenderer.shared.captureVideos(site.url, rounds: rounds);
+    return [
+      for (final v in found)
+        // Every video comes from the same page; tell them apart by their file.
+        MediaItem(
+          id: hashKey(v.url.toString()),
+          siteId: site.id,
+          siteName: site.name,
+          title: v.title,
+          thumbnailUrl: v.poster,
+          mediaUrl: v.url,
+          pageUrl: site.url,
+          kind: MediaKind.video,
+        ),
+    ];
   }
 
   /// Videos, GIFs, and post links that may hold one, from any site. Post links are treated as
@@ -114,6 +161,7 @@ class ReelsStore extends ChangeNotifier {
         'source': _loadedSource,
         'items': items.take(300).map((e) => e.toJson()).toList(),
         'next': _next?.toString(),
+        'rounds': _rounds,
       }));
 }
 
