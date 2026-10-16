@@ -1,0 +1,86 @@
+name: Build Android & Windows
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths: ["cross/**", ".github/workflows/cross.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cross-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.47.7"
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cross
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - run: flutter test
+      - run: flutter build apk --release --build-number=${{ github.run_number }}
+      - run: cp build/app/outputs/flutter-apk/app-release.apk ../inutt.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: inutt.apk
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: cross
+    steps:
+      - uses: actions/checkout@v4
+      - uses: NuGet/setup-nuget@v2
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - run: flutter build windows --release --build-number=${{ github.run_number }}
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ..\out\iNUTT | Out-Null
+          Copy-Item -Recurse -Force build\windows\x64\runner\Release\* ..\out\iNUTT\
+          Compress-Archive -Path ..\out\iNUTT -DestinationPath ..\iNUTT-windows.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: iNUTT-windows.zip
+
+  release:
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete nightly-cross --yes --cleanup-tag || true
+          gh release create nightly-cross inutt.apk iNUTT-windows.zip --prerelease \
+            --target "$GITHUB_SHA" --title "iNUTT for Android & Windows (latest)" \
+            --notes "Android: install inutt.apk. Windows: unzip iNUTT-windows.zip and run iNUTT.exe."

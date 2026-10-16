@@ -3,6 +3,7 @@ name: Build IPA
 on:
   push:
     branches: [main, "claude/**"]
+    paths-ignore: ["cross/**", ".github/workflows/cross.yml"]
   workflow_dispatch:
 
 permissions:

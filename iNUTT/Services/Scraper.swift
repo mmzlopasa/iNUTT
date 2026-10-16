@@ -87,6 +87,8 @@ enum Scraper {
                 let key = href.absoluteString.lowercased()
                 if !name.isEmpty, name.count <= 60, seenCategories.insert(key).inserted {
                     cardCategories.append(SiteCategory(name: name, url: href, thumbnailURL: thumb))
+                    // The cover must not come back later as a standalone image.
+                    if let t = thumb?.absoluteString { seen.insert("thumb:" + t) }
                 }
                 continue
             }

@@ -77,7 +77,7 @@ struct SettingsView: View {
                         row("internaldrive", "Clear cache", value: ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
                     }
                 } header: { sectionTitle("Downloads & storage") } footer: {
-                    Text("Preuzimanja se uvijek spremaju i u aplikaciju Datoteke › iNUTT.")
+                    Text("Downloads are also saved in the Files app › iNUTT.")
                         .font(Theme.text(12)).foregroundStyle(Theme.muted)
                 }
                 .listRowBackground(rowBG)
