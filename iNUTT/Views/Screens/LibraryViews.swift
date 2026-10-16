@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FavoritesView: View {
     @EnvironmentObject private var library: Library
+    @EnvironmentObject private var router: Router
     @State private var filter: MediaKind?
 
     private var items: [MediaItem] {
@@ -10,7 +11,7 @@ struct FavoritesView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $router.favorites) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .firstTextBaseline) {
@@ -35,6 +36,9 @@ struct FavoritesView: View {
             .tabBarInset()
             .background(NightSky())
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: SiteRoute.self) { r in
+                SiteRouteView(route: r)
+            }
         }
     }
 }
@@ -99,7 +103,7 @@ struct HistoryView: View {
                         Button {
                             let all = filtered.map(\.item)
                             let idx = all.firstIndex(of: entry.item) ?? 0
-                            viewer.present(all, at: idx)
+                            viewer.open(all, at: idx)
                         } label: {
                             HistoryRow(entry: entry)
                         }

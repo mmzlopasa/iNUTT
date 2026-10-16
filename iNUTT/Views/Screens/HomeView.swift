@@ -1,14 +1,13 @@
 import SwiftUI
 
 struct HomeView: View {
-    @Binding var selectedTab: AppTab
     @EnvironmentObject private var sites: SiteStore
     @EnvironmentObject private var engine: FeedEngine
     @EnvironmentObject private var viewer: ViewerState
     @State private var filter: MediaKind?
     @State private var showAdd = false
     @State private var showHistory = false
-    @State private var path = NavigationPath()
+    @EnvironmentObject private var router: Router
 
     private var enabled: [Site] { sites.enabledSites }
 
@@ -19,7 +18,7 @@ struct HomeView: View {
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: $router.home) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
@@ -37,7 +36,7 @@ struct HomeView: View {
                             KindFilterBar(filter: $filter)
                             if filter == nil {
                                 ForEach(enabled) { site in
-                                    SiteRow(site: site) { path.append(SiteRoute(siteID: site.id)) }
+                                    SiteRow(site: site) { router.home.append(SiteRoute(siteID: site.id)) }
                                 }
                             }
                             if !items.isEmpty {
@@ -134,7 +133,7 @@ struct HeroCarousel: View {
         VStack(spacing: 10) {
             TabView(selection: $index) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
-                    Button { viewer.present(items, at: i) } label: { card(item) }
+                    Button { viewer.open(items, at: i) } label: { card(item) }
                         .buttonStyle(CardPressStyle())
                         .padding(.horizontal, 16)
                         .tag(i)
@@ -225,7 +224,7 @@ struct SiteRow: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
-                            Button { viewer.present(engine.items(site), at: i) } label: {
+                            Button { viewer.open(engine.items(site), at: i) } label: {
                                 let a: CGFloat = item.kind == .video ? 16 / 11 : 4 / 5
                                 MediaCard(item: item, aspect: a)
                                     .frame(width: 190 * a, height: 190)

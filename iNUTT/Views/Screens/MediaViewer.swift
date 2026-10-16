@@ -188,6 +188,7 @@ struct MediaPage: View {
     var onTap: () -> Void
 
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var viewer: ViewerState
     @State private var resolved: ResolvedMedia?
     @State private var image: UIImage?
     @State private var player: AVPlayer?
@@ -196,7 +197,9 @@ struct MediaPage: View {
 
     var body: some View {
         ZStack {
-            if let r = resolved {
+            if let r = resolved, r.isListing {
+                listingPanel
+            } else if let r = resolved {
                 switch r.kind {
                 case .video:
                     if let player {
@@ -245,6 +248,25 @@ struct MediaPage: View {
         }
     }
 
+    /// Shown when the tapped tile is a category or album: it opens as a grid, not as one image.
+    private var listingPanel: some View {
+        ZStack {
+            if let t = item.thumbnailURL {
+                RemoteImage(url: t, referer: item.referer, maxPixel: 600, contentMode: .fit, showsPlaceholder: false)
+                    .opacity(0.25)
+            }
+            VStack(spacing: 14) {
+                Image(systemName: "square.grid.2x2.fill").font(.system(size: 34)).foregroundStyle(Theme.gold)
+                Text(item.displayTitle).font(Theme.display(18, .semibold)).foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center).lineLimit(2)
+                Text("This is a category with more content.").font(Theme.text(14)).foregroundStyle(Theme.body)
+                Button { viewer.openListing(item) } label: { Label("Open category", systemImage: "arrow.right") }
+                    .buttonStyle(GoldButtonStyle())
+            }
+            .padding(24)
+        }
+    }
+
     private var placeholder: some View {
         ZStack {
             // The grid thumbnail is already cached, so something is on screen instantly.
@@ -262,6 +284,10 @@ struct MediaPage: View {
         failed = false
         guard let r = await FeedEngine.shared.resolve(item) else { failed = true; return }
         resolved = r
+        if r.isListing {
+            if isActive { viewer.openListing(item) }
+            return
+        }
         switch r.kind {
         case .video:
             if player == nil { player = makePlayer(r) }

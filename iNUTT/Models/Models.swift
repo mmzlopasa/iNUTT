@@ -45,6 +45,8 @@ struct MediaItem: Codable, Identifiable, Hashable {
     var duration: String?
     var categoryName: String?
     var addedAt: Date
+    /// True when the link leads to a list of more items (a category or album), not to one media file.
+    var isListing: Bool?
 
     init(siteID: UUID, siteName: String, title: String, thumbnailURL: URL?, mediaURL: URL?, pageURL: URL?,
          kind: MediaKind, duration: String? = nil, categoryName: String? = nil, addedAt: Date = Date()) {
@@ -72,6 +74,13 @@ struct MediaItem: Codable, Identifiable, Hashable {
     }
 
     var referer: URL? { pageURL ?? thumbnailURL }
+
+    /// The category this item opens when it is a listing tile.
+    var asCategory: SiteCategory? {
+        guard let p = pageURL else { return nil }
+        let name = title.isEmpty ? p.lastPathComponent.replacingOccurrences(of: "-", with: " ").capitalized : title
+        return SiteCategory(name: name, url: p, thumbnailURL: thumbnailURL)
+    }
 }
 
 struct SiteCategory: Codable, Identifiable, Hashable {
@@ -121,6 +130,8 @@ struct ResolvedMedia: Hashable {
     /// Extra images when the page is a gallery.
     var gallery: [URL] = []
     var referer: URL?
+    /// The page turned out to be a category / listing page rather than a single media item.
+    var isListing = false
 }
 
 enum Limits {

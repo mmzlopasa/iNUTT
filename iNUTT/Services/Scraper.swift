@@ -75,16 +75,21 @@ enum Scraper {
             if hrefKind == nil, href.path == baseURL.path, href.query == baseURL.query { continue }
 
             let text = HTML.stripTags(inner)
+            let duration = HTML.firstMatch(#"(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])"#, in: text)
+            // Tiles like "Amateur · 1,234 videos" are categories even when the URL does not say so.
+            let countHint = duration == nil && HTML.firstMatch(countHintPattern, in: text, group: 0) != nil
             // Category tiles (a thumbnail linking to a category page) become categories, not media.
-            if hrefKind == nil, HTML.registrableDomain(href.host) == siteDomain, isCategoryURL(href) {
-                let name = cleanTitle(attrs["title"] ?? (text.isEmpty ? (alt ?? "") : text), duration: nil)
+            if hrefKind == nil, HTML.registrableDomain(href.host) == siteDomain, isCategoryURL(href) || countHint {
+                var name = cleanTitle(attrs["title"] ?? (text.isEmpty ? (alt ?? "") : text), duration: nil)
+                name = HTML.regex(countHintPattern).stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
+                    .trimmingCharacters(in: CharacterSet.whitespaces.union(.punctuationCharacters))
+                if name.isEmpty { name = cleanTitle(alt ?? href.lastPathComponent.replacingOccurrences(of: "-", with: " ").capitalized, duration: nil) }
                 let key = href.absoluteString.lowercased()
                 if !name.isEmpty, name.count <= 60, seenCategories.insert(key).inserted {
                     cardCategories.append(SiteCategory(name: name, url: href, thumbnailURL: thumb))
                 }
                 continue
             }
-            let duration = HTML.firstMatch(#"(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])"#, in: text)
             let title = cleanTitle(attrs["title"] ?? alt ?? text, duration: duration)
             let lowerInner = inner.lowercased() + " " + attrText.lowercased()
             let videoHint = duration != nil
@@ -433,6 +438,9 @@ enum Scraper {
     }
 
     static let categoryPathPattern = #"/(categor(?:y|ies)|cats?|tags?|channels?|genres?|collections?|topics?|sections?|niches?|albums?|boards?|playlists?|c|r)/[^/?#]+/?$"#
+
+    /// "1,234 videos", "56 photos", "12.5K clips" on a tile marks it as a category or album.
+    static let countHintPattern = #"\b\d[\d.,]*\s*[km]?\+?\s*(?:videos?|clips?|movies?|galleries|gallery|pics|pictures|photos|images|gifs|items|posts|albums?)\b"#
 
     static func isCategoryURL(_ u: URL) -> Bool {
         let p = u.path as NSString

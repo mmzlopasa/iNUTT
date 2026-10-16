@@ -5,6 +5,7 @@ struct SearchView: View {
 
     @EnvironmentObject private var engine: FeedEngine
     @EnvironmentObject private var sites: SiteStore
+    @EnvironmentObject private var router: Router
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var library: Library
     @State private var query = ""
@@ -46,7 +47,7 @@ struct SearchView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $router.search) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Picker("", selection: $scope) {

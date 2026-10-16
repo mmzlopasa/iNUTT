@@ -10,6 +10,7 @@ struct iNUTTApp: App {
     @StateObject private var lock = LockManager.shared
     @StateObject private var downloads = DownloadManager.shared
     @StateObject private var viewer = ViewerState()
+    @StateObject private var router = Router.shared
     @Environment(\.scenePhase) private var phase
 
     init() {
@@ -37,6 +38,7 @@ struct iNUTTApp: App {
                 .environmentObject(lock)
                 .environmentObject(downloads)
                 .environmentObject(viewer)
+                .environmentObject(router)
                 .preferredColorScheme(.dark)
                 .tint(Theme.gold)
         }
@@ -74,5 +76,52 @@ final class ViewerState: ObservableObject {
         let lower = max(0, index - 150)
         let upper = min(items.count, index + 150)
         presentation = ViewerPresentation(items: Array(items[lower..<upper]), index: index - lower)
+    }
+
+    /// Opens a tapped item: category tiles navigate to their grid, media opens in the viewer.
+    func open(_ items: [MediaItem], at index: Int) {
+        guard items.indices.contains(index) else { return }
+        let item = items[index]
+        if item.isListing == true, let c = item.asCategory {
+            Router.shared.push(SiteRoute(siteID: item.siteID, category: c))
+            return
+        }
+        // Keep category tiles out of the pager.
+        let media = items.filter { $0.isListing != true }
+        present(media, at: media.firstIndex(of: item) ?? 0)
+    }
+
+    /// Called from the viewer when an item turned out to be a category page.
+    func openListing(_ item: MediaItem) {
+        guard let c = item.asCategory else { return }
+        presentation = nil
+        Task { @MainActor in
+            // Let the viewer finish closing before navigating.
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            Router.shared.push(SiteRoute(siteID: item.siteID, category: c))
+        }
+    }
+}
+
+/// Navigation state of every tab, so any screen (and the viewer) can open a site or category.
+@MainActor
+final class Router: ObservableObject {
+    static let shared = Router()
+    @Published var tab: AppTab = .home
+    @Published var home = NavigationPath()
+    @Published var sites = NavigationPath()
+    @Published var search = NavigationPath()
+    @Published var favorites = NavigationPath()
+
+    func push(_ route: SiteRoute) {
+        switch tab {
+        case .home: home.append(route)
+        case .search: search.append(route)
+        case .favorites: favorites.append(route)
+        case .sites: sites.append(route)
+        case .settings:
+            tab = .sites
+            sites.append(route)
+        }
     }
 }

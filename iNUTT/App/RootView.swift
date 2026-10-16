@@ -32,19 +32,19 @@ struct RootView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var engine: FeedEngine
     @Environment(\.scenePhase) private var phase
-    @State private var tab: AppTab = .home
+    @EnvironmentObject private var router: Router
     @State private var didStart = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            TabView(selection: $tab) {
-                HomeView(selectedTab: $tab).tag(AppTab.home).toolbar(.hidden, for: .tabBar)
+            TabView(selection: $router.tab) {
+                HomeView().tag(AppTab.home).toolbar(.hidden, for: .tabBar)
                 SitesView().tag(AppTab.sites).toolbar(.hidden, for: .tabBar)
                 SearchView().tag(AppTab.search).toolbar(.hidden, for: .tabBar)
                 FavoritesView().tag(AppTab.favorites).toolbar(.hidden, for: .tabBar)
                 SettingsView().tag(AppTab.settings).toolbar(.hidden, for: .tabBar)
             }
-            FloatingTabBar(selection: $tab)
+            FloatingTabBar(selection: $router.tab)
                 .padding(.bottom, 6)
         }
         .ignoresSafeArea(.keyboard)
@@ -52,6 +52,7 @@ struct RootView: View {
         .fullScreenCover(item: $viewer.presentation) { p in
             MediaViewer(items: p.items, startIndex: p.index)
                 .environmentObject(downloads)
+                .environmentObject(viewer)
         }
         .overlay(alignment: .top) {
             if let t = downloads.toast, viewer.presentation == nil {

@@ -170,7 +170,7 @@ struct MediaGrid: View {
         LazyVGrid(columns: cols, spacing: 12) {
             ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
                 Button {
-                    viewer.present(items, at: idx)
+                    viewer.open(items, at: idx)
                 } label: {
                     MediaCard(item: item, aspect: aspect)
                 }

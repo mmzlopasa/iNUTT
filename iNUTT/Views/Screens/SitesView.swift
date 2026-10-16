@@ -2,12 +2,13 @@ import SwiftUI
 
 struct SitesView: View {
     @EnvironmentObject private var sites: SiteStore
+    @EnvironmentObject private var router: Router
     @EnvironmentObject private var engine: FeedEngine
     @State private var showAdd = false
     @Environment(\.horizontalSizeClass) private var hSize
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $router.sites) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     HStack {

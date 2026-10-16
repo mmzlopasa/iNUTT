@@ -15,6 +15,8 @@ final class FeedEngine: ObservableObject {
 
     private var nextPages: [String: URL] = [:]
     private var resolvedCache: [String: ResolvedMedia] = [:]
+    /// Per feed: whether its thumbnail tiles turned out to be categories (checked once per launch).
+    private var listingProbe: [String: Bool] = [:]
     private var saveWork: DispatchWorkItem?
 
     private struct Snapshot: Codable {
@@ -96,10 +98,30 @@ final class FeedEngine: ObservableObject {
         loading.insert(key)
         defer { loading.remove(key) }
         do {
-            let r = try await Self.fetchListing(url: category?.url ?? site.url, base: category?.url ?? site.url,
+            var r = try await Self.fetchListing(url: category?.url ?? site.url, base: category?.url ?? site.url,
                                                 site: site, categoryName: category?.name, allowRender: allowRender)
+            var old = feeds[key] ?? []
+            // Tiles that open more items (categories, albums) must not be shown as single images.
+            var probe = listingProbe[key]
+            if probe == nil, allowRender { probe = await Self.probeListingTiles(r, site: site) }
+            if let probe {
+                listingProbe[key] = probe
+                if probe {
+                    let tiles = r.items.filter(Self.isTileCandidate)
+                    let tileIDs = Set(tiles.map(\.id))
+                    if category == nil {
+                        let cats = tiles.compactMap(\.asCategory)
+                        let catURLs = Set(cats.map(\.url))
+                        r.categories = cats + r.categories.filter { !catURLs.contains($0.url) }
+                        r.items.removeAll { tileIDs.contains($0.id) }
+                        old.removeAll { $0.isListing == true || tileIDs.contains($0.id) || Self.isTileCandidate($0) }
+                    } else {
+                        for i in r.items.indices where tileIDs.contains(r.items[i].id) { r.items[i].isListing = true }
+                        old.removeAll { tileIDs.contains($0.id) }
+                    }
+                }
+            }
             errors[key] = nil
-            let old = feeds[key] ?? []
             let newIDs = Set(r.items.map(\.id))
             var merged = r.items + old.filter { !newIDs.contains($0.id) }
             if merged.count > Limits.maxItemsPerFeed { merged = Array(merged.prefix(Limits.maxItemsPerFeed)) }
@@ -154,6 +176,7 @@ final class FeedEngine: ObservableObject {
         feeds = [:]
         nextPages = [:]
         resolvedCache = [:]
+        listingProbe = [:]
         lastRefresh = nil
         scheduleSave()
     }
@@ -196,6 +219,50 @@ final class FeedEngine: ObservableObject {
         return result
     }
 
+    // MARK: Category tiles
+
+    /// A tile that opens a page (not a media file) and shows no video duration.
+    nonisolated static func isTileCandidate(_ i: MediaItem) -> Bool {
+        i.pageURL != nil && i.mediaURL == nil && i.duration == nil && i.kind != .video
+    }
+
+    /// Opens up to two tiles of a listing; when they lead to pages full of videos or images,
+    /// the tiles are categories (or albums) rather than single media.
+    nonisolated static func probeListingTiles(_ r: ScrapeResult, site: Site) async -> Bool? {
+        let tiles = r.items.filter(isTileCandidate)
+        guard tiles.count >= 4, Double(tiles.count) >= Double(r.items.count) * 0.6 else { return false }
+        var listings = 0, checked = 0
+        for t in tiles.prefix(2) {
+            guard let page = t.pageURL, let isList = await isListingPage(page, site: site) else { continue }
+            checked += 1
+            if isList { listings += 1 } else { return false }
+        }
+        return checked == 0 ? nil : listings == checked
+    }
+
+    /// True when the page is a grid of many items rather than a page for one video or image.
+    nonisolated static func isListingPage(_ url: URL, site: Site) async -> Bool? {
+        guard let (data, resp) = try? await Net.fetch(url) else { return nil }
+        let html = Net.text(data, response: resp)
+        return isListingHTML(html, url: resp?.url ?? url, site: site)
+    }
+
+    nonisolated static func isListingHTML(_ html: String, url: URL, site: Site) -> Bool {
+        if let type = Scraper.meta("og:type", in: html)?.lowercased(), type.contains("video") { return false }
+        if Scraper.meta("og:video", in: html) != nil || Scraper.meta("og:video:url", in: html) != nil { return false }
+        if Scraper.resolveDetail(html: html, pageURL: url, maxHeight: 2160)?.kind == .video { return false }
+        let r = Scraper.parseListing(html: html, baseURL: url, site: site, categoryName: nil)
+        let media = r.items.filter { $0.kind == .video || $0.duration != nil || $0.kind == .gif }.count
+        return r.items.count >= 8 && media >= 4
+    }
+
+    private func markListing(_ item: MediaItem) {
+        for (k, list) in feeds {
+            if let i = list.firstIndex(where: { $0.id == item.id }) { feeds[k]?[i].isListing = true }
+        }
+        scheduleSave()
+    }
+
     // MARK: Resolving
 
     func cachedResolution(_ item: MediaItem) -> ResolvedMedia? { resolvedCache[item.id] }
@@ -216,6 +283,13 @@ final class FeedEngine: ObservableObject {
             let site = SiteStore.shared.site(item.siteID)
             if site?.renderMode != .full, let (data, resp) = try? await Net.fetch(page) {
                 let html = Net.text(data, response: resp)
+                if item.kind != .video, item.duration == nil, let site,
+                   Self.isListingHTML(html, url: resp?.url ?? page, site: site) {
+                    let r = ResolvedMedia(url: page, kind: .image, referer: page, isListing: true)
+                    resolvedCache[item.id] = r
+                    markListing(item)
+                    return r
+                }
                 result = Scraper.resolveDetail(html: html, pageURL: resp?.url ?? page, maxHeight: maxQ)
             }
             let wantsVideo = item.kind == .video && result?.kind != .video
