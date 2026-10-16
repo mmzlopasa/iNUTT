@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var cacheSize: Int64 = 0
     @State private var confirmClearCache = false
     @State private var confirmRemovePIN = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -83,7 +84,22 @@ struct SettingsView: View {
                 .listRowBackground(rowBG)
 
                 Section {
+                    ShareLink(item: sites.sites.map(\.url.absoluteString).joined(separator: "\n"),
+                              subject: Text("iNUTT sites"),
+                              message: Text("My iNUTT sites")) {
+                        row("square.and.arrow.up", "Export sites", value: "\(sites.sites.count)")
+                    }
+                    .disabled(sites.sites.isEmpty)
+                } header: { sectionTitle("Backup") } footer: {
+                    Text("Exports your site links as text. To restore them, paste the list into Add links › Multiple links.")
+                        .font(Theme.text(12)).foregroundStyle(Theme.muted)
+                }
+                .listRowBackground(rowBG)
+
+                Section {
                     row("info.circle", "Version", value: appVersion)
+                    NavigationLink { LegalView(title: "Privacy", text: LegalText.privacy) } label: { row("hand.raised.fill", "Privacy") }
+                    NavigationLink { LegalView(title: "Terms of use", text: LegalText.terms) } label: { row("doc.text.fill", "Terms of use") }
                     Link(destination: URL(string: "https://scyde.dev")!) {
                         row("hammer.fill", "Developer", value: "SCYDE")
                     }
@@ -126,6 +142,18 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("SETTINGS").font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
             Wordmark(size: 30)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .topTrailing) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
         }
         .padding(.vertical, 6)
     }

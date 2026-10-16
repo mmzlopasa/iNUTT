@@ -13,6 +13,7 @@ import 'core/stores.dart';
 import 'screens/home.dart';
 import 'screens/library.dart';
 import 'screens/lock.dart';
+import 'screens/onboarding.dart';
 import 'screens/reels.dart';
 import 'screens/search.dart';
 import 'screens/sites.dart';
@@ -145,6 +146,8 @@ class _RootViewState extends State<RootView> with WidgetsBindingObserver {
               ),
               if (AppSettings.shared.hideInSwitcher && _life != AppLifecycleState.resumed && !LockManager.shared.isLocked)
                 const Positioned.fill(child: _PrivacyCover()),
+              if (!AppSettings.shared.onboarded)
+                Positioned.fill(child: OnboardingView(onDone: () => AppSettings.shared.onboarded = true)),
               if (LockManager.shared.isLocked) const Positioned.fill(child: LockView()),
             ]);
           },

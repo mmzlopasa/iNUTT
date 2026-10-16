@@ -1,8 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../core/downloads.dart';
 import '../core/feed_engine.dart';
 import '../core/image_cache.dart';
 import '../core/models.dart';
@@ -11,6 +13,7 @@ import '../core/stores.dart';
 import '../ui/theme.dart';
 import 'library.dart';
 import 'lock.dart';
+import 'onboarding.dart';
 
 const appVersion = '1.0.0';
 
@@ -149,10 +152,29 @@ class _SettingsViewState extends State<SettingsView> {
                 ],
               ),
               Section(
+                title: 'Backup',
+                footer: 'Copies your site links as text. To restore them, paste the list into Add links › Multiple links.',
+                children: [
+                  Row2(
+                    icon: Icons.ios_share_rounded,
+                    title: 'Export sites',
+                    value: '${SiteStore.shared.sites.length}',
+                    onTap: SiteStore.shared.sites.isEmpty
+                        ? null
+                        : () async {
+                            await Clipboard.setData(ClipboardData(text: SiteStore.shared.sites.map((e) => e.url.toString()).join('\n')));
+                            DownloadManager.shared.show('Site links copied');
+                          },
+                  ),
+                ],
+              ),
+              Section(
                 title: 'About',
                 footer: 'iNUTT · made by SCYDE · scyde.dev',
                 children: [
                   const Row2(icon: Icons.info_rounded, title: 'Version', value: appVersion),
+                  Row2(icon: Icons.privacy_tip_rounded, title: 'Privacy', onTap: () => _push(const LegalView(title: 'Privacy', text: LegalText.privacy))),
+                  Row2(icon: Icons.description_rounded, title: 'Terms of use', onTap: () => _push(const LegalView(title: 'Terms of use', text: LegalText.terms))),
                   Row2(
                     icon: Icons.handyman_rounded,
                     title: 'Developer',

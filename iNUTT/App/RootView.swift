@@ -34,6 +34,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var phase
     @EnvironmentObject private var router: Router
     @State private var didStart = false
+    @AppStorage("onboarded") private var onboarded = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -65,6 +66,12 @@ struct RootView: View {
         .overlay {
             if settings.hideInSwitcher && phase != .active && !lock.isLocked {
                 PrivacyCover()
+            }
+        }
+        .overlay {
+            if !onboarded {
+                OnboardingView { withAnimation(.easeInOut(duration: 0.3)) { onboarded = true } }
+                    .transition(.opacity)
             }
         }
         .overlay {

@@ -185,6 +185,8 @@ class AppSettings extends ChangeNotifier {
   set startMuted(bool v) => _sb('muted', v);
   bool get saveToGallery => _b('saveToGallery', true);
   set saveToGallery(bool v) => _sb('saveToGallery', v);
+  bool get onboarded => _b('onboarded', false);
+  set onboarded(bool v) => _sb('onboarded', v);
   bool get hideInSwitcher => _b('hideInSwitcher', false);
   set hideInSwitcher(bool v) => _sb('hideInSwitcher', v);
 
