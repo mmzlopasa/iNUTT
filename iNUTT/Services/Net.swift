@@ -207,7 +207,7 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
         u.pathExtension.lowercased() == "m3u8" ? (u.host ?? "") + u.deletingLastPathComponent().path : (u.host ?? "") + u.path
     }
 
-    static let collectScript = """
+    static let collectScript = #"""
     (function(){
       var out=[], seen={};
       function add(u,p,t){ if(!u||u.indexOf('blob:')===0||u.indexOf('data:')===0||seen[u])return; seen[u]=1; out.push({u:String(u),p:String(p||''),t:String(t||'')}); }
@@ -224,9 +224,9 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
       });
       return JSON.stringify(out);
     })()
-    """
+    """#
 
-    static let swipeScript = """
+    static let swipeScript = #"""
     (function(){
       var h=window.innerHeight;
       document.querySelectorAll('*').forEach(function(e){
@@ -237,7 +237,7 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
       document.querySelectorAll('video').forEach(function(v){ v.muted=true; var r=v.getBoundingClientRect(); if(r.top<h&&r.bottom>0){ try{v.play();}catch(e){} } });
       return 1;
     })()
-    """
+    """#
 
     private func finish(_ web: WKWebView, ok: Bool) {
         if let c = continuations.removeValue(forKey: ObjectIdentifier(web)) { c.resume(returning: ok) }
