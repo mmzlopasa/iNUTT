@@ -57,16 +57,19 @@ class ReelsStore extends ChangeNotifier {
     notifyListeners();
     try {
       final r = await FeedEngine.fetchListing(site.url, site.url, site, null);
-      var list = r.items.where(isReel).toList();
+      var list = reels(r.items);
       // A page of categories: play the first ones.
       if (list.length < 4) {
         for (final c in r.categories.take(3)) {
           try {
             final r2 = await FeedEngine.fetchListing(c.url, c.url, site, c.name);
-            list += r2.items.where(isReel).toList();
+            final have = list.map((e) => e.id).toSet();
+            list += reels(r2.items).where((e) => !have.contains(e.id)).toList();
           } catch (_) {}
         }
       }
+      // The link itself is one reel (a single video page).
+      if (list.isEmpty) list = [MediaItem(siteId: site.id, siteName: site.name, title: '', pageUrl: site.url, kind: MediaKind.video)];
       items = list;
       _next = r.nextPage;
       _loadedSource = AppSettings.shared.reelsSource;
@@ -87,7 +90,7 @@ class ReelsStore extends ChangeNotifier {
     try {
       final r = await FeedEngine.fetchListing(next, site.url, site, null);
       final have = items.map((e) => e.id).toSet();
-      items = [...items, ...r.items.where((e) => isReel(e) && !have.contains(e.id))];
+      items = [...items, ...reels(r.items).where((e) => !have.contains(e.id))];
       _next = r.nextPage == next ? null : r.nextPage;
       _save();
     } catch (_) {
@@ -97,9 +100,15 @@ class ReelsStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Videos, GIFs, and links that may hold one; plain pictures are left out.
-  static bool isReel(MediaItem i) =>
-      !i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif || (i.mediaUrl == null && i.pageUrl != null && i.duration != null));
+  /// Videos, GIFs, and post links that may hold one, from any site. Post links are treated as
+  /// videos so resolving them renders the page until its video shows up. Plain pictures are left out.
+  static List<MediaItem> reels(List<MediaItem> items) => [
+        for (final i in items)
+          if (!i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif))
+            i
+          else if (!i.isListing && i.mediaUrl == null && i.pageUrl != null)
+            (i..kind = MediaKind.video),
+      ];
 
   void _save() => unawaited(Disk.save('reels.json', {
         'source': _loadedSource,
@@ -242,7 +251,7 @@ class _ReelsViewState extends State<ReelsView> {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('Reels source', style: T.display(18, weight: FontWeight.w600)),
             const SizedBox(height: 8),
-            Text('One link only. Subreddits with videos work best; TikTok itself blocks apps from reading its feed.',
+            Text('One link to any site with short videos. A few sites, like TikTok and Instagram, block apps from reading their feed.',
                 style: T.text(13, color: T.muted)),
             const SizedBox(height: 14),
             const _SourceField(closeOnSave: true),
@@ -286,7 +295,7 @@ class _SourceFieldState extends State<_SourceField> {
           onChanged: (_) => setState(() {}),
           onSubmitted: (_) => _save(),
           decoration: InputDecoration(
-            hintText: 'e.g. r/TikTokCringe or a video site',
+            hintText: 'any video site or r/subreddit',
             hintStyle: T.mono(14, color: T.muted),
             filled: true,
             fillColor: Colors.white.withValues(alpha: 0.06),

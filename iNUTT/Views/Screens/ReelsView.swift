@@ -45,14 +45,19 @@ final class ReelsStore: ObservableObject {
         defer { loading = false }
         do {
             let r = try await FeedEngine.fetchListing(url: site.url, base: site.url, site: site, categoryName: nil, allowRender: true)
-            var list = r.items.filter(Self.isReel)
+            var list = Self.reels(r.items)
             // A page of categories: play the first ones.
             if list.count < 4 {
                 for c in r.categories.prefix(3) {
                     if let r2 = try? await FeedEngine.fetchListing(url: c.url, base: c.url, site: site, categoryName: c.name, allowRender: true) {
-                        list += r2.items.filter(Self.isReel)
+                        let have = Set(list.map(\.id))
+                        list += Self.reels(r2.items).filter { !have.contains($0.id) }
                     }
                 }
+            }
+            // The link itself is one reel (a single video page).
+            if list.isEmpty {
+                list = [MediaItem(siteID: site.id, siteName: site.name, title: "", thumbnailURL: nil, mediaURL: nil, pageURL: site.url, kind: .video)]
             }
             items = list
             next = r.nextPage
@@ -73,15 +78,23 @@ final class ReelsStore: ObservableObject {
             return
         }
         let have = Set(items.map(\.id))
-        let fresh = r.items.filter { Self.isReel($0) && !have.contains($0.id) }
+        let fresh = Self.reels(r.items).filter { !have.contains($0.id) }
         items += fresh
         self.next = (r.nextPage == next) ? nil : r.nextPage
         save()
     }
 
-    /// Videos, GIFs, and links that may hold one; plain pictures are left out.
-    static func isReel(_ i: MediaItem) -> Bool {
-        i.isListing != true && (i.kind == .video || i.kind == .gif || (i.mediaURL == nil && i.pageURL != nil && i.duration != nil))
+    /// Videos, GIFs, and post links that may hold one, from any site. Post links are treated as
+    /// videos so resolving them renders the page until its video shows up. Plain pictures are left out.
+    static func reels(_ items: [MediaItem]) -> [MediaItem] {
+        items.compactMap { i in
+            if i.isListing == true { return nil }
+            if i.kind == .video || i.kind == .gif { return i }
+            guard i.mediaURL == nil, i.pageURL != nil else { return nil }
+            var v = i
+            v.kind = .video
+            return v
+        }
     }
 
     private func save() {
@@ -159,7 +172,7 @@ struct ReelsView: View {
 
     private var sourceField: some View {
         VStack(spacing: 12) {
-            TextField("e.g. r/TikTokCringe or a video site", text: $draft)
+            TextField("any video site or r/subreddit", text: $draft)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
@@ -180,7 +193,7 @@ struct ReelsView: View {
     private var sourceSheet: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 14) {
-                Text("One link only. Subreddits with videos work best; TikTok itself blocks apps from reading its feed.")
+                Text("One link to any site with short videos. A few sites, like TikTok and Instagram, block apps from reading their feed.")
                     .font(Theme.text(13)).foregroundStyle(Theme.muted)
                 sourceField
                 Spacer()
