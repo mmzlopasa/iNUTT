@@ -1,8 +1,67 @@
 name: Build IPA
+
 on:
+  push:
+    branches: [main, "claude/**"]
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  noop:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: macos-15
     steps:
-      - run: echo ok
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -project iNUTT.xcodeproj \
+            -scheme iNUTT \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            build > build.log 2>&1 || true
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" build.log | sort -u | head -150
+          grep -q "BUILD SUCCEEDED" build.log || { tail -80 build.log; exit 1; }
+
+      - name: Package IPA
+        run: |
+          APP="build/Build/Products/Release-iphoneos/iNUTT.app"
+          test -d "$APP"
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out && zip -qry inutt.ipa Payload && ls -lh inutt.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inutt-ipa
+          path: out/inutt.ipa
+
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete nightly --yes --cleanup-tag || true
+          gh release create nightly out/inutt.ipa \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "iNUTT build #${{ github.run_number }}" \
+            --notes "Nepotpisani build za Feather. Commit: $GITHUB_SHA (${GITHUB_REF_NAME})"
