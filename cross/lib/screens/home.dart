@@ -253,7 +253,7 @@ class SiteRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final engine = FeedEngine.shared;
-    final all = engine.items(site);
+    final all = engine.homeItems(site);
     final items = all.take(20).toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(

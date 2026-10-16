@@ -92,7 +92,7 @@ class SiteCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final engine = FeedEngine.shared;
-    final items = engine.items(site);
+    final items = engine.homeItems(site);
     // Up to four thumbnails: latest items first, then category covers.
     final previews = [
       ...items.map((e) => e.thumbnailUrl).whereType<Uri>(),

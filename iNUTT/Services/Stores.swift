@@ -162,6 +162,8 @@ final class AppSettings: ObservableObject {
     @Published var backgroundRefresh: Bool { didSet { d.set(backgroundRefresh, forKey: "backgroundRefresh") } }
     @Published var hideInSwitcher: Bool { didSet { d.set(hideInSwitcher, forKey: "hideInSwitcher") } }
     @Published var recentSearches: [String] { didSet { d.set(recentSearches, forKey: "recentSearches") } }
+    /// The one site the Reels tab plays from.
+    @Published var reelsSource: String { didSet { d.set(reelsSource, forKey: "reelsSource") } }
 
     private init() {
         d.register(defaults: [
@@ -180,6 +182,7 @@ final class AppSettings: ObservableObject {
         backgroundRefresh = d.bool(forKey: "backgroundRefresh")
         hideInSwitcher = d.bool(forKey: "hideInSwitcher")
         recentSearches = d.stringArray(forKey: "recentSearches") ?? []
+        reelsSource = d.string(forKey: "reelsSource") ?? ""
     }
 
     func addRecentSearch(_ q: String) {

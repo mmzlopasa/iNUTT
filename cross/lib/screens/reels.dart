@@ -1,0 +1,478 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+
+import '../core/downloads.dart';
+import '../core/feed_engine.dart';
+import '../core/models.dart';
+import '../core/net.dart';
+import '../core/stores.dart';
+import '../ui/remote_image.dart';
+import '../ui/theme.dart';
+
+/// Loads the short videos of the one Reels source and keeps them for an instant start next time.
+class ReelsStore extends ChangeNotifier {
+  static final ReelsStore shared = ReelsStore._();
+  ReelsStore._() {
+    final j = Disk.load('reels.json');
+    if (j is Map<String, dynamic> && j['source'] == AppSettings.shared.reelsSource) {
+      items = (j['items'] as List? ?? []).map((e) => MediaItem.fromJson(e as Map<String, dynamic>)).toList();
+      _next = j['next'] == null ? null : Uri.tryParse(j['next'] as String);
+      _loadedSource = j['source'] as String;
+    }
+  }
+
+  List<MediaItem> items = [];
+  bool loading = false;
+  String? error;
+  Uri? _next;
+  String _loadedSource = '';
+
+  Uri? get sourceUrl => SiteStore.normalize(AppSettings.shared.reelsSource);
+
+  /// A hidden site describing the source, so the normal loaders can read it.
+  Site? get site {
+    final u = sourceUrl;
+    if (u == null) return null;
+    return Site(id: 'reels-source', name: u.host.replaceFirst('www.', ''), url: u);
+  }
+
+  Future<void> loadIfNeeded() async {
+    if (_loadedSource != AppSettings.shared.reelsSource) {
+      items = [];
+      _next = null;
+      error = null;
+      notifyListeners();
+    }
+    if (items.isEmpty) await refresh();
+  }
+
+  Future<void> refresh() async {
+    final site = this.site;
+    if (site == null || loading) return;
+    loading = true;
+    notifyListeners();
+    try {
+      final r = await FeedEngine.fetchListing(site.url, site.url, site, null);
+      var list = r.items.where(isReel).toList();
+      // A page of categories: play the first ones.
+      if (list.length < 4) {
+        for (final c in r.categories.take(3)) {
+          try {
+            final r2 = await FeedEngine.fetchListing(c.url, c.url, site, c.name);
+            list += r2.items.where(isReel).toList();
+          } catch (_) {}
+        }
+      }
+      items = list;
+      _next = r.nextPage;
+      _loadedSource = AppSettings.shared.reelsSource;
+      error = list.isEmpty ? 'No videos found at this link. Try a subreddit with videos, e.g. r/TikTokCringe.' : null;
+      _save();
+    } catch (e) {
+      if (items.isEmpty) error = 'Couldn\'t load this source. Check the link and your connection.';
+    }
+    loading = false;
+    notifyListeners();
+  }
+
+  Future<void> loadMore() async {
+    final site = this.site;
+    final next = _next;
+    if (site == null || next == null || loading) return;
+    loading = true;
+    try {
+      final r = await FeedEngine.fetchListing(next, site.url, site, null);
+      final have = items.map((e) => e.id).toSet();
+      items = [...items, ...r.items.where((e) => isReel(e) && !have.contains(e.id))];
+      _next = r.nextPage == next ? null : r.nextPage;
+      _save();
+    } catch (_) {
+      _next = null;
+    }
+    loading = false;
+    notifyListeners();
+  }
+
+  /// Videos, GIFs, and links that may hold one; plain pictures are left out.
+  static bool isReel(MediaItem i) =>
+      !i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif || (i.mediaUrl == null && i.pageUrl != null && i.duration != null));
+
+  void _save() => unawaited(Disk.save('reels.json', {
+        'source': _loadedSource,
+        'items': items.take(300).map((e) => e.toJson()).toList(),
+        'next': _next?.toString(),
+      }));
+}
+
+/// TikTok-style feed: one full-screen video at a time, swipe up for the next.
+class ReelsView extends StatefulWidget {
+  final bool active;
+  const ReelsView({super.key, required this.active});
+
+  @override
+  State<ReelsView> createState() => _ReelsViewState();
+}
+
+class _ReelsViewState extends State<ReelsView> {
+  final _page = PageController();
+  int _index = 0;
+  String _source = AppSettings.shared.reelsSource;
+
+  @override
+  void initState() {
+    super.initState();
+    AppSettings.shared.addListener(_settingsChanged);
+    if (widget.active) unawaited(ReelsStore.shared.loadIfNeeded());
+  }
+
+  @override
+  void didUpdateWidget(ReelsView old) {
+    super.didUpdateWidget(old);
+    if (widget.active && !old.active) unawaited(ReelsStore.shared.loadIfNeeded());
+  }
+
+  @override
+  void dispose() {
+    AppSettings.shared.removeListener(_settingsChanged);
+    _page.dispose();
+    super.dispose();
+  }
+
+  void _settingsChanged() {
+    if (AppSettings.shared.reelsSource == _source) return;
+    _source = AppSettings.shared.reelsSource;
+    setState(() => _index = 0);
+    if (_page.hasClients) _page.jumpToPage(0);
+    unawaited(ReelsStore.shared.loadIfNeeded());
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: ReelsStore.shared,
+        builder: (context, _) {
+          final store = ReelsStore.shared;
+          Widget body;
+          if (store.sourceUrl == null) {
+            body = _setup(context);
+          } else if (store.items.isEmpty) {
+            body = store.loading
+                ? const Center(child: CircularProgressIndicator(color: T.gold))
+                : Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        EmptyState(
+                          icon: Icons.smart_display_rounded,
+                          title: 'No reels',
+                          message: store.error ?? 'Nothing to play yet.',
+                          buttonTitle: 'Try again',
+                          onButton: store.refresh,
+                        ),
+                        const SizedBox(height: 14),
+                        GhostButton(label: 'Change source', onPressed: () => _editSource(context)),
+                      ]),
+                    ),
+                  );
+          } else {
+            body = Stack(children: [
+              PageView.builder(
+                controller: _page,
+                scrollDirection: Axis.vertical,
+                allowImplicitScrolling: true,
+                itemCount: store.items.length,
+                onPageChanged: (i) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _index = i);
+                  if (i >= store.items.length - 4) unawaited(store.loadMore());
+                },
+                itemBuilder: (context, i) => ReelPage(
+                  key: ValueKey(store.items[i].id),
+                  item: store.items[i],
+                  active: widget.active && i == _index,
+                ),
+              ),
+              _topBar(context),
+            ]);
+          }
+          return ColoredBox(color: Colors.black, child: body);
+        },
+      );
+
+  Widget _topBar(BuildContext context) => Positioned(
+        top: MediaQuery.paddingOf(context).top + 4,
+        left: 16,
+        right: 16,
+        child: Row(children: [
+          Text('Reels', style: T.display(20, weight: FontWeight.w700, color: Colors.white)),
+          const Spacer(),
+          _RoundButton(icon: Icons.tune_rounded, onTap: () => _editSource(context)),
+        ]),
+      );
+
+  Widget _setup(BuildContext context) => Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const EmptyState(
+                icon: Icons.smart_display_rounded,
+                title: 'Reels',
+                message: 'Add one link with short videos. They play full screen; swipe up for the next one.',
+              ),
+              const SizedBox(height: 16),
+              const _SourceField(),
+            ]),
+          ),
+        ),
+      );
+
+  void _editSource(BuildContext context) => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useRootNavigator: true,
+        backgroundColor: T.bg,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        builder: (context) => Padding(
+          padding: EdgeInsets.fromLTRB(16, 20, 16, MediaQuery.viewInsetsOf(context).bottom + 24),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Reels source', style: T.display(18, weight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text('One link only. Subreddits with videos work best; TikTok itself blocks apps from reading its feed.',
+                style: T.text(13, color: T.muted)),
+            const SizedBox(height: 14),
+            const _SourceField(closeOnSave: true),
+          ]),
+        ),
+      );
+}
+
+class _SourceField extends StatefulWidget {
+  final bool closeOnSave;
+  const _SourceField({this.closeOnSave = false});
+
+  @override
+  State<_SourceField> createState() => _SourceFieldState();
+}
+
+class _SourceFieldState extends State<_SourceField> {
+  late final _text = TextEditingController(text: AppSettings.shared.reelsSource);
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  bool get _valid => SiteStore.normalize(_text.text) != null;
+
+  void _save() {
+    if (!_valid) return;
+    AppSettings.shared.reelsSource = _text.text.trim();
+    if (widget.closeOnSave) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        TextField(
+          controller: _text,
+          autocorrect: false,
+          keyboardType: TextInputType.url,
+          style: T.mono(14, color: T.ink),
+          onChanged: (_) => setState(() {}),
+          onSubmitted: (_) => _save(),
+          decoration: InputDecoration(
+            hintText: 'e.g. r/TikTokCringe or a video site',
+            hintStyle: T.mono(14, color: T.muted),
+            filled: true,
+            fillColor: Colors.white.withValues(alpha: 0.06),
+            contentPadding: const EdgeInsets.all(14),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: T.line2)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: T.line2)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: T.gold)),
+          ),
+        ),
+        const SizedBox(height: 12),
+        GoldButton(label: 'Use this source', onPressed: _valid ? _save : null),
+      ]);
+}
+
+/// One reel: a full-screen video that fills the screen, with its title and actions on top.
+class ReelPage extends StatefulWidget {
+  final MediaItem item;
+  final bool active;
+  const ReelPage({super.key, required this.item, required this.active});
+
+  @override
+  State<ReelPage> createState() => _ReelPageState();
+}
+
+class _ReelPageState extends State<ReelPage> {
+  ResolvedMedia? _resolved;
+  Player? _player;
+  VideoController? _video;
+  bool _failed = false;
+  bool _paused = false;
+  bool _muted = AppSettings.shared.startMuted;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(ReelPage old) {
+    super.didUpdateWidget(old);
+    if (old.active == widget.active) return;
+    if (widget.active) {
+      Library.shared.record(widget.item);
+      if (!_paused) _player?.play();
+    } else {
+      _player?.pause();
+    }
+  }
+
+  @override
+  void dispose() {
+    _player?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final r = await FeedEngine.shared.resolve(widget.item);
+    if (!mounted) return;
+    if (r == null || r.isListing) return setState(() => _failed = true);
+    setState(() => _resolved = r);
+    if (r.kind != MediaKind.video) {
+      if (widget.active) Library.shared.record(widget.item);
+      return;
+    }
+    final p = Player(configuration: const PlayerConfiguration(bufferSize: 16 * 1024 * 1024));
+    final v = VideoController(p);
+    await p.setPlaylistMode(PlaylistMode.single);
+    if (_muted) await p.setVolume(0);
+    await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer)), play: widget.active && !_paused);
+    if (!mounted) {
+      await p.dispose();
+      return;
+    }
+    if (widget.active) Library.shared.record(widget.item);
+    setState(() {
+      _player = p;
+      _video = v;
+    });
+  }
+
+  void _togglePause() {
+    final p = _player;
+    if (p == null) return;
+    setState(() => _paused = !_paused);
+    _paused ? p.pause() : p.play();
+  }
+
+  void _toggleMute() {
+    setState(() => _muted = !_muted);
+    _player?.setVolume(_muted ? 0 : 100);
+    AppSettings.shared.startMuted = _muted;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final r = _resolved;
+    Widget media;
+    if (_video != null) {
+      media = Video(controller: _video!, fit: BoxFit.cover, fill: Colors.black, controls: NoVideoControls);
+    } else if (r != null && r.kind != MediaKind.video) {
+      media = RemoteImage(url: r.url, referer: r.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 900);
+    } else {
+      media = Stack(fit: StackFit.expand, children: [
+        if (item.thumbnailUrl != null)
+          RemoteImage(url: item.thumbnailUrl, referer: item.referer, fit: BoxFit.cover, placeholder: false, decodeWidth: 600),
+        Center(
+          child: _failed
+              ? Text('Couldn\'t play this one. Swipe up for the next.', style: T.text(14, color: T.body), textAlign: TextAlign.center)
+              : const CircularProgressIndicator(strokeWidth: 2.5, color: T.gold),
+        ),
+      ]);
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _togglePause,
+      child: Stack(fit: StackFit.expand, children: [
+        const ColoredBox(color: Colors.black),
+        media,
+        if (_paused) Center(child: Icon(Icons.play_arrow_rounded, size: 72, color: Colors.white.withValues(alpha: 0.85))),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Color(0x8C000000)]),
+            ),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, 80, 16, MediaQuery.paddingOf(context).bottom + 96),
+              child: ListenableBuilder(
+                listenable: Library.shared,
+                builder: (context, _) {
+                  final fav = Library.shared.isFavorite(item);
+                  return Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                        Text(item.siteName.toUpperCase(), style: T.mono(10, color: T.gold, spacing: 1)),
+                        if (item.title.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(item.title,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: T.text(15, weight: FontWeight.w500, color: Colors.white)),
+                        ],
+                      ]),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(mainAxisSize: MainAxisSize.min, children: [
+                      _RoundButton(
+                          icon: fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                          on: fav,
+                          size: 48,
+                          onTap: () => Library.shared.toggleFavorite(item)),
+                      const SizedBox(height: 16),
+                      _RoundButton(icon: Icons.download_rounded, size: 48, onTap: () => DownloadManager.shared.download(item)),
+                      const SizedBox(height: 16),
+                      _RoundButton(icon: _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded, size: 48, onTap: _toggleMute),
+                    ]),
+                  ]);
+                },
+              ),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _RoundButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool on;
+  final double size;
+  const _RoundButton({required this.icon, required this.onTap, this.on = false, this.size = 40});
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        onTap: onTap,
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withValues(alpha: 0.32)),
+          child: Icon(icon, size: size * 0.5, color: on ? T.gold : Colors.white),
+        ),
+      );
+}

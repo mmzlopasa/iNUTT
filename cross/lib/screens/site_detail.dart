@@ -49,7 +49,7 @@ class _SiteDetailViewState extends State<SiteDetailView> {
   void initState() {
     super.initState();
     final e = FeedEngine.shared;
-    if (e.items(widget.site).isEmpty && widget.site.categories.isEmpty) e.refresh(widget.site, null);
+    if (e.homeItems(widget.site).isEmpty) e.refreshForHome(widget.site);
   }
 
   @override
@@ -58,7 +58,7 @@ class _SiteDetailViewState extends State<SiteDetailView> {
         builder: (context, _) {
           final site = SiteStore.shared.site(widget.site.id) ?? widget.site;
           final engine = FeedEngine.shared;
-          final all = engine.items(site);
+          final all = engine.homeItems(site);
           final items = _filter == null ? all : all.where((e) => e.kind == _filter).toList();
           final cats = site.categories;
           return SkyScaffold(
@@ -73,7 +73,7 @@ class _SiteDetailViewState extends State<SiteDetailView> {
             ),
             body: RefreshIndicator(
               color: T.gold,
-              onRefresh: () => engine.refresh(site, null),
+              onRefresh: () => engine.refreshForHome(site),
               child: CustomScrollView(slivers: [
                 SliverToBoxAdapter(child: SiteHeader(site: site, subtitle: site.host)),
                 if (cats.isNotEmpty && all.isEmpty) ...[

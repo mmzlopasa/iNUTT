@@ -1,12 +1,13 @@
 import SwiftUI
 
 enum AppTab: Int, CaseIterable, Identifiable {
-    case home, sites, search, favorites, settings
+    case home, reels, sites, search, favorites, settings
     var id: Int { rawValue }
 
     var title: String {
         switch self {
         case .home: return "Home"
+        case .reels: return "Reels"
         case .sites: return "Sites"
         case .search: return "Search"
         case .favorites: return "Favorites"
@@ -17,6 +18,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .home: return "house.fill"
+        case .reels: return "play.rectangle.on.rectangle.fill"
         case .sites: return "square.grid.2x2.fill"
         case .search: return "magnifyingglass"
         case .favorites: return "heart.fill"
@@ -39,6 +41,7 @@ struct RootView: View {
         ZStack(alignment: .bottom) {
             TabView(selection: $router.tab) {
                 HomeView().tag(AppTab.home).toolbar(.hidden, for: .tabBar)
+                ReelsView().tag(AppTab.reels).toolbar(.hidden, for: .tabBar)
                 SitesView().tag(AppTab.sites).toolbar(.hidden, for: .tabBar)
                 SearchView().tag(AppTab.search).toolbar(.hidden, for: .tabBar)
                 FavoritesView().tag(AppTab.favorites).toolbar(.hidden, for: .tabBar)
@@ -109,7 +112,7 @@ struct FloatingTabBar: View {
                         Image(systemName: t.symbol)
                             .font(.system(size: 18, weight: .semibold))
                             .frame(height: 22)
-                        Text(t.title).font(Theme.text(10, .medium))
+                        Text(t.title).font(Theme.text(10, .medium)).lineLimit(1).minimumScaleFactor(0.75)
                     }
                     .foregroundStyle(selection == t ? Theme.onGold : Theme.muted)
                     .frame(maxWidth: .infinity)

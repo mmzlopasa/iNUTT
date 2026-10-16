@@ -13,6 +13,7 @@ import 'core/stores.dart';
 import 'screens/home.dart';
 import 'screens/library.dart';
 import 'screens/lock.dart';
+import 'screens/reels.dart';
 import 'screens/search.dart';
 import 'screens/settings.dart';
 import 'screens/sites.dart';
@@ -126,6 +127,7 @@ class _RootViewState extends State<RootView> with WidgetsBindingObserver {
               const Positioned.fill(child: NightSky()),
               IndexedStack(index: router.tab.index, children: [
                 _tab(AppTab.home, const HomeView()),
+                _tab(AppTab.reels, ReelsView(active: router.tab == AppTab.reels)),
                 _tab(AppTab.sites, const SitesView()),
                 _tab(AppTab.search, const SearchView()),
                 _tab(AppTab.favorites, const FavoritesView()),

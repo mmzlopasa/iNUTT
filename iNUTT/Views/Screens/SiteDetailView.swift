@@ -32,7 +32,7 @@ struct SiteDetailView: View {
     private var current: Site { sites.site(site.id) ?? site }
 
     private var items: [MediaItem] {
-        let all = engine.items(current)
+        let all = engine.homeItems(current)
         guard let filter else { return all }
         return all.filter { $0.kind == filter }
     }
@@ -45,7 +45,7 @@ struct SiteDetailView: View {
                 SiteHeader(site: current, subtitle: current.host)
 
                 if !categories.isEmpty {
-                    if engine.items(current).isEmpty {
+                    if engine.homeItems(current).isEmpty {
                         // A site whose page is a category index: show the categories as the main content.
                         VStack(alignment: .leading, spacing: 12) {
                             SectionHeader(title: "Categories", subtitle: "\(categories.count) categories")
@@ -71,9 +71,9 @@ struct SiteDetailView: View {
                     }
                 }
 
-                if !engine.items(current).isEmpty {
+                if !engine.homeItems(current).isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        SectionHeader(title: "Latest", subtitle: "\(engine.items(current).count) items")
+                        SectionHeader(title: "Latest", subtitle: "\(engine.homeItems(current).count) items")
                             .padding(.horizontal, 16)
                         KindFilterBar(filter: $filter)
                         MediaGrid(items: items) {
@@ -97,7 +97,7 @@ struct SiteDetailView: View {
             }
             .padding(.top, 6)
         }
-        .refreshable { await engine.refresh(current, nil) }
+        .refreshable { await engine.refreshForHome(current, allowRender: true) }
         .tabBarInset()
         .background(NightSky())
         .navigationBarTitleDisplayMode(.inline)
@@ -113,7 +113,7 @@ struct SiteDetailView: View {
         .task {
             guard !didLoad else { return }
             didLoad = true
-            if engine.items(current).isEmpty && current.categories.isEmpty { await engine.refresh(current, nil) }
+            if engine.homeItems(current).isEmpty { await engine.refreshForHome(current, allowRender: true) }
         }
     }
 }

@@ -61,7 +61,7 @@ struct SiteCard: View {
     @EnvironmentObject private var engine: FeedEngine
 
     var body: some View {
-        let items = engine.items(site)
+        let items = engine.homeItems(site)
         let previews = previewThumbs(items)
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {

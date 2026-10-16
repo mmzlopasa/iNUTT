@@ -42,8 +42,40 @@ final class FeedEngine: ObservableObject {
     func hasMore(_ site: Site, _ category: SiteCategory? = nil) -> Bool { nextPages[Self.key(site, category)] != nil }
 
     /// All cached items across enabled sites, interleaved so no site dominates.
+    /// What a site contributes to Home and its Latest section: real media, never category covers.
+    /// When the site's own page only lists categories, its newest items come from those categories.
+    func homeItems(_ site: Site) -> [MediaItem] {
+        let covers = Set(site.categories.compactMap { $0.thumbnailURL?.absoluteString })
+        let root = (feeds[Self.key(site)] ?? []).filter { i in
+            i.isListing != true && !(i.thumbnailURL.map { covers.contains($0.absoluteString) } ?? false)
+                && site.category(matching: i.pageURL) == nil
+        }
+        guard !site.categories.isEmpty, Self.needsCategoryFeeds(root) else { return root }
+        let lists = site.categories.map { feeds[Self.key(site, $0)] ?? [] }.filter { !$0.isEmpty }
+        if lists.isEmpty { return root.filter(Self.isMedia) }
+        var out = root.filter(Self.isMedia)
+        var seen = Set(out.map(\.id))
+        let maxLen = lists.map(\.count).max() ?? 0
+        for i in 0..<maxLen {
+            for l in lists where i < l.count && l[i].isListing != true {
+                if seen.insert(l[i].id).inserted { out.append(l[i]) }
+            }
+        }
+        return out
+    }
+
+    /// Clearly a video, GIF or direct media file rather than a picture linking to another page.
+    nonisolated static func isMedia(_ i: MediaItem) -> Bool {
+        i.kind == .video || i.kind == .gif || i.duration != nil || i.mediaURL != nil
+    }
+
+    /// The root page shows (almost) no real media, so its content lives in the categories.
+    nonisolated static func needsCategoryFeeds(_ root: [MediaItem]) -> Bool {
+        root.filter(isMedia).count < 6
+    }
+
     func mixedFeed(_ sites: [Site]) -> [MediaItem] {
-        let lists = sites.map { feeds[Self.key($0)] ?? [] }
+        let lists = sites.map { homeItems($0) }
         var out: [MediaItem] = []
         var seen = Set<String>()
         let maxLen = lists.map(\.count).max() ?? 0
@@ -78,18 +110,28 @@ final class FeedEngine: ObservableObject {
             var it = sites.makeIterator()
             var running = 0
             while running < 4, let s = it.next() {
-                group.addTask { await self.refresh(s, nil, allowRender: allowRender) }
+                group.addTask { await self.refreshForHome(s, allowRender: allowRender) }
                 running += 1
             }
             while await group.next() != nil {
                 if let s = it.next() {
-                    group.addTask { await self.refresh(s, nil, allowRender: allowRender) }
+                    group.addTask { await self.refreshForHome(s, allowRender: allowRender) }
                 }
             }
         }
         lastRefresh = Date()
         scheduleSave()
         prefetchThumbnails()
+    }
+
+    /// Refreshes a site and, when its page only lists categories, the first few categories too.
+    func refreshForHome(_ site: Site, allowRender: Bool) async {
+        await refresh(site, nil, allowRender: allowRender)
+        guard let s = SiteStore.shared.site(site.id), !s.categories.isEmpty,
+              Self.needsCategoryFeeds(feeds[Self.key(s)] ?? []) else { return }
+        for c in s.categories.prefix(4) {
+            await refresh(s, c, allowRender: allowRender)
+        }
     }
 
     func refresh(_ site: Site, _ category: SiteCategory?, allowRender: Bool = true) async {

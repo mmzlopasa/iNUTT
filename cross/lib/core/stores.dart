@@ -188,6 +188,13 @@ class AppSettings extends ChangeNotifier {
   bool get hideInSwitcher => _b('hideInSwitcher', false);
   set hideInSwitcher(bool v) => _sb('hideInSwitcher', v);
 
+  /// The one link the Reels tab plays from.
+  String get reelsSource => _p.getString('reelsSource') ?? '';
+  set reelsSource(String v) {
+    _p.setString('reelsSource', v);
+    notifyListeners();
+  }
+
   int get maxQuality => _p.getInt('maxQuality') ?? 2160;
   set maxQuality(int v) {
     _p.setInt('maxQuality', v);

@@ -199,7 +199,8 @@ struct SiteRow: View {
     @EnvironmentObject private var viewer: ViewerState
 
     var body: some View {
-        let items = Array(engine.items(site).prefix(20))
+        let all = engine.homeItems(site)
+        let items = Array(all.prefix(20))
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 SiteIcon(site: site, size: 30)
@@ -225,7 +226,7 @@ struct SiteRow: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
-                            Button { viewer.open(engine.items(site), at: i) } label: {
+                            Button { viewer.open(all, at: i) } label: {
                                 let a: CGFloat = item.kind == .video ? 16 / 11 : 4 / 5
                                 MediaCard(item: item, aspect: a)
                                     .frame(width: 190 * a, height: 190)

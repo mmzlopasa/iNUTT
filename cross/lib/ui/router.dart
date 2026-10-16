@@ -7,6 +7,7 @@ import '../screens/viewer.dart';
 
 enum AppTab {
   home('Home', Icons.home_rounded),
+  reels('Reels', Icons.smart_display_rounded),
   sites('Sites', Icons.grid_view_rounded),
   search('Search', Icons.search_rounded),
   favorites('Favorites', Icons.favorite_rounded),
@@ -36,7 +37,7 @@ class AppRouter extends ChangeNotifier {
   }
 
   void push(Widget page) {
-    if (tab == AppTab.settings) {
+    if (tab == AppTab.settings || tab == AppTab.reels) {
       tab = AppTab.sites;
       notifyListeners();
     }

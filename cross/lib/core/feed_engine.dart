@@ -43,9 +43,36 @@ class FeedEngine extends ChangeNotifier {
   bool isLoading(Site site, [SiteCategory? c]) => loading.contains(key(site, c));
   String? error(Site site, [SiteCategory? c]) => errors[key(site, c)];
 
+  /// Clearly a video, GIF or direct media file rather than a picture linking to another page.
+  static bool isMedia(MediaItem i) => i.kind == MediaKind.video || i.kind == MediaKind.gif || i.duration != null || i.mediaUrl != null;
+
+  /// The root page shows (almost) no real media, so its content lives in the categories.
+  static bool needsCategoryFeeds(List<MediaItem> root) => root.where(isMedia).length < 6;
+
+  /// What a site contributes to Home and its Latest section: real media, never category covers.
+  /// When the site's own page only lists categories, its newest items come from those categories.
+  List<MediaItem> homeItems(Site site) {
+    final covers = site.categories.map((c) => c.thumbnailUrl?.toString()).whereType<String>().toSet();
+    final root = (feeds[key(site)] ?? const <MediaItem>[])
+        .where((i) => !i.isListing && !covers.contains(i.thumbnailUrl?.toString()) && site.categoryMatching(i.pageUrl) == null)
+        .toList();
+    if (site.categories.isEmpty || !needsCategoryFeeds(root)) return root;
+    final lists = site.categories.map((c) => feeds[key(site, c)] ?? const <MediaItem>[]).where((l) => l.isNotEmpty).toList();
+    final out = root.where(isMedia).toList();
+    if (lists.isEmpty) return out;
+    final seen = out.map((e) => e.id).toSet();
+    final maxLen = lists.fold<int>(0, (m, l) => l.length > m ? l.length : m);
+    for (var i = 0; i < maxLen; i++) {
+      for (final l in lists) {
+        if (i < l.length && !l[i].isListing && seen.add(l[i].id)) out.add(l[i]);
+      }
+    }
+    return out;
+  }
+
   /// All cached items across enabled sites, interleaved so no site dominates.
   List<MediaItem> mixedFeed(List<Site> sites) {
-    final lists = sites.map((s) => feeds[key(s)] ?? const <MediaItem>[]).toList();
+    final lists = sites.map(homeItems).toList();
     final out = <MediaItem>[];
     final seen = <String>{};
     final maxLen = lists.fold<int>(0, (m, l) => l.length > m ? l.length : m);
@@ -73,7 +100,7 @@ class FeedEngine extends ChangeNotifier {
     final queue = [...sites];
     Future<void> worker() async {
       while (queue.isNotEmpty) {
-        await refresh(queue.removeAt(0), null);
+        await refreshForHome(queue.removeAt(0));
       }
     }
 
@@ -83,6 +110,16 @@ class FeedEngine extends ChangeNotifier {
     notifyListeners();
     _scheduleSave();
     _prefetchThumbnails();
+  }
+
+  /// Refreshes a site and, when its page only lists categories, the first few categories too.
+  Future<void> refreshForHome(Site site) async {
+    await refresh(site, null);
+    final s = SiteStore.shared.site(site.id);
+    if (s == null || s.categories.isEmpty || !needsCategoryFeeds(feeds[key(s)] ?? const [])) return;
+    for (final c in s.categories.take(4)) {
+      await refresh(s, c);
+    }
   }
 
   Future<void> refresh(Site site, SiteCategory? category) async {
