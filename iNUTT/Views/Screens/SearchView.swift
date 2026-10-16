@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SearchView: View {
-    enum Scope: String, CaseIterable { case local = "U aplikaciji", remote = "Na stranicama" }
+    enum Scope: String, CaseIterable { case local = "In app", remote = "On sites" }
 
     @EnvironmentObject private var engine: FeedEngine
     @EnvironmentObject private var sites: SiteStore
@@ -60,18 +60,18 @@ struct SearchView: View {
                     if query.isEmpty {
                         idle
                     } else if scope == .local {
-                        results(localResults, emptyText: "Nema rezultata u spremljenom sadržaju. Probaj \"Na stranicama\".")
+                        results(localResults, emptyText: "No results in saved content. Try \"On sites\".")
                     } else {
                         if searching {
                             HStack(spacing: 10) {
                                 ProgressView().tint(Theme.gold)
-                                Text("Pretražujem \(sites.enabledSites.count) stranica…").font(Theme.text(14)).foregroundStyle(Theme.body)
+                                Text("Searching \(sites.enabledSites.count) sites…").font(Theme.text(14)).foregroundStyle(Theme.body)
                             }
                             .frame(maxWidth: .infinity).padding()
                         }
                         let r = filter == nil ? remoteResults : remoteResults.filter { $0.kind == filter }
                         if !searching || !r.isEmpty {
-                            results(r, emptyText: lastRemoteQuery.isEmpty ? "Pritisni Traži na tipkovnici." : "Stranice nisu vratile rezultate.")
+                            results(r, emptyText: lastRemoteQuery.isEmpty ? "Press Search on the keyboard." : "The sites returned no results.")
                         }
                     }
                 }
@@ -80,12 +80,12 @@ struct SearchView: View {
             .scrollDismissesKeyboard(.interactively)
             .tabBarInset()
             .background(NightSky())
-            .navigationTitle("Traži")
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Slike, GIF-ovi, videi, kategorije…")
+            .navigationTitle("Search")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Images, GIFs, videos, categories…")
             .onSubmit(of: .search) { submit() }
             .onChange(of: scope) { s in if s == .remote && !query.isEmpty && query != lastRemoteQuery { submit() } }
             .navigationDestination(for: SiteRoute.self) { r in
-                if let s = sites.site(r.siteID) { SiteDetailView(site: s, initialCategory: r.category) }
+                SiteRouteView(route: r)
             }
         }
     }
@@ -116,7 +116,7 @@ struct SearchView: View {
                 .frame(maxWidth: .infinity).padding(30)
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeader(title: "Rezultati", subtitle: "\(items.count) stavki")
+                SectionHeader(title: "Results", subtitle: "\(items.count) items")
                 MediaGrid(items: items)
             }
             .padding(.horizontal, 16)
@@ -128,8 +128,8 @@ struct SearchView: View {
         if !settings.recentSearches.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    SectionHeader(title: "Nedavno")
-                    Button("Očisti") { settings.recentSearches = [] }
+                    SectionHeader(title: "Recent")
+                    Button("Clear") { settings.recentSearches = [] }
                         .font(Theme.text(13, .medium)).foregroundStyle(Theme.gold)
                 }
                 FlowLayout(spacing: 8) {
@@ -146,15 +146,15 @@ struct SearchView: View {
         if !matchingCategories.isEmpty {
             categoryChips
         } else if sites.sites.isEmpty {
-            EmptyStateView(symbol: "magnifyingglass", title: "Pretraga",
-                           message: "Dodaj stranice u postavkama da bi mogao pretraživati njihov sadržaj.")
+            EmptyStateView(symbol: "magnifyingglass", title: "Search",
+                           message: "Add sites in Settings to search their content.")
                 .padding(.horizontal, 16)
         }
     }
 
     private var categoryChips: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Kategorije", subtitle: "sa svih stranica")
+            SectionHeader(title: "Categories", subtitle: "from all sites")
             FlowLayout(spacing: 8) {
                 ForEach(matchingCategories) { pair in
                     NavigationLink(value: SiteRoute(siteID: pair.site.id, category: pair.category)) {

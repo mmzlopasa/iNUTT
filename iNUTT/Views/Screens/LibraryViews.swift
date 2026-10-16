@@ -15,7 +15,7 @@ struct FavoritesView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("FAVORITI").font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
+                            Text("FAVORITES").font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
                             Text("\(library.favorites.count)").font(Theme.dot(34)).foregroundStyle(Theme.goldGradient)
                         }
                         Spacer()
@@ -23,8 +23,8 @@ struct FavoritesView: View {
                     .padding(.horizontal, 16)
                     KindFilterBar(filter: $filter)
                     if items.isEmpty {
-                        EmptyStateView(symbol: "heart", title: "Još nema favorita",
-                                       message: "Dodirni srce u pregledniku sadržaja ili dugo pritisni karticu.")
+                        EmptyStateView(symbol: "heart", title: "No favorites yet",
+                                       message: "Tap the heart in the viewer or long-press a card.")
                             .padding(.horizontal, 16)
                     } else {
                         MediaGrid(items: items).padding(.horizontal, 16)
@@ -65,14 +65,14 @@ struct HistoryView: View {
     private var grouped: [DaySection] {
         let cal = Calendar.current
         let f = DateFormatter()
-        f.locale = Locale(identifier: "hr_HR")
-        f.dateFormat = "EEEE, d. MMMM"
+        f.locale = Locale(identifier: "en_US")
+        f.dateFormat = "EEEE, MMMM d"
         var order: [String] = []
         var map: [String: [HistoryEntry]] = [:]
         for e in filtered {
             let label: String
-            if cal.isDateInToday(e.viewedAt) { label = "Danas" }
-            else if cal.isDateInYesterday(e.viewedAt) { label = "Jučer" }
+            if cal.isDateInToday(e.viewedAt) { label = "Today" }
+            else if cal.isDateInYesterday(e.viewedAt) { label = "Yesterday" }
             else { label = f.string(from: e.viewedAt).capitalized }
             if map[label] == nil { order.append(label) }
             map[label, default: []].append(e)
@@ -83,12 +83,12 @@ struct HistoryView: View {
     var body: some View {
         List {
             if !settings.historyEnabled {
-                Text("Spremanje povijesti je isključeno u postavkama.")
+                Text("Saving history is turned off in Settings.")
                     .font(Theme.text(13)).foregroundStyle(Theme.muted)
                     .listRowBackground(Color.clear)
             }
             if filtered.isEmpty {
-                Text(query.isEmpty ? "Povijest je prazna." : "Nema rezultata.")
+                Text(query.isEmpty ? "History is empty." : "No results.")
                     .font(Theme.text(14)).foregroundStyle(Theme.muted)
                     .frame(maxWidth: .infinity).padding(.vertical, 30)
                     .listRowBackground(Color.clear)
@@ -105,7 +105,7 @@ struct HistoryView: View {
                         }
                         .listRowBackground(Theme.navy.opacity(0.6))
                         .swipeActions {
-                            Button(role: .destructive) { library.removeHistory([entry.id]) } label: { Label("Obriši", systemImage: "trash") }
+                            Button(role: .destructive) { library.removeHistory([entry.id]) } label: { Label("Delete", systemImage: "trash") }
                         }
                     }
                 } header: {
@@ -115,15 +115,15 @@ struct HistoryView: View {
         }
         .scrollContentBackground(.hidden)
         .background(NightSky())
-        .searchable(text: $query, prompt: "Pretraži povijest")
-        .navigationTitle("Povijest")
+        .searchable(text: $query, prompt: "Search history")
+        .navigationTitle("History")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Očisti") { confirmClear = true }.disabled(library.history.isEmpty)
+                Button("Clear") { confirmClear = true }.disabled(library.history.isEmpty)
             }
         }
-        .confirmationDialog("Obrisati cijelu povijest?", isPresented: $confirmClear, titleVisibility: .visible) {
-            Button("Obriši povijest", role: .destructive) { library.clearHistory() }
+        .confirmationDialog("Clear all history?", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("Clear history", role: .destructive) { library.clearHistory() }
         }
     }
 }

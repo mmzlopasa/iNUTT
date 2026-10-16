@@ -274,7 +274,7 @@ struct SiteIcon: View {
 extension Date {
     var relativeHR: String {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "hr_HR")
+        f.locale = Locale(identifier: "en_US")
         f.unitsStyle = .short
         return f.localizedString(for: self, relativeTo: Date())
     }

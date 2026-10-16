@@ -51,15 +51,15 @@ final class DownloadManager: NSObject, ObservableObject {
     func download(_ item: MediaItem) async {
         guard progress[item.id] == nil else { return }
         guard let media = await FeedEngine.shared.resolve(item) else {
-            show("Sadržaj nije pronađen", symbol: "exclamationmark.triangle.fill", isError: true)
+            show("Content not found", symbol: "exclamationmark.triangle.fill", isError: true)
             return
         }
         if media.url.absoluteString.contains(".m3u8") {
-            show("Ovaj video je stream i ne može se preuzeti", symbol: "exclamationmark.triangle.fill", isError: true)
+            show("This video is a stream and can't be downloaded", symbol: "exclamationmark.triangle.fill", isError: true)
             return
         }
         progress[item.id] = 0
-        show("Preuzimam…", symbol: "arrow.down.circle.fill", progress: 0, autoHide: false)
+        show("Downloading…", symbol: "arrow.down.circle.fill", progress: 0, autoHide: false)
         defer { progress[item.id] = nil }
 
         do {
@@ -69,7 +69,7 @@ final class DownloadManager: NSObject, ObservableObject {
             let (tmp, response) = try await delegate.download(req, in: session) { p in
                 Task { @MainActor in
                     self.progress[id] = p
-                    self.show("Preuzimam…", symbol: "arrow.down.circle.fill", progress: p, autoHide: false)
+                    self.show("Downloading…", symbol: "arrow.down.circle.fill", progress: p, autoHide: false)
                 }
             }
             let ext = Self.fileExtension(for: media, response: response)
@@ -83,13 +83,13 @@ final class DownloadManager: NSObject, ObservableObject {
 
             if AppSettings.shared.saveToPhotos {
                 try await Self.saveToPhotos(dest, kind: media.kind == .video ? .video : (ext == "gif" ? .gif : .image))
-                show("Spremljeno u Fotografije", symbol: "checkmark.circle.fill")
+                show("Saved to Photos", symbol: "checkmark.circle.fill")
             } else {
-                show("Spremljeno u Datoteke › iNUTT", symbol: "checkmark.circle.fill")
+                show("Saved to Files › iNUTT", symbol: "checkmark.circle.fill")
             }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch {
-            show("Preuzimanje nije uspjelo", symbol: "xmark.octagon.fill", isError: true)
+            show("Download failed", symbol: "xmark.octagon.fill", isError: true)
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }

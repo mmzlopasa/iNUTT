@@ -24,27 +24,29 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     header
                     if enabled.isEmpty {
-                        EmptyStateView(symbol: "sparkles", title: "Dobro došao u iNUTT",
-                                       message: "Dodaj stranice sa slikama, GIF-ovima i videima. Sadržaj se prikazuje kao u aplikaciji, bez preglednika.",
-                                       buttonTitle: "Dodaj stranicu") { showAdd = true }
+                        EmptyStateView(symbol: "sparkles", title: "Welcome to iNUTT",
+                                       message: "Add sites with images, GIFs and videos. Everything is shown natively, no browser.",
+                                       buttonTitle: "Add site") { showAdd = true }
                             .padding(.horizontal, 16)
                     } else {
                         let items = mixed
-                        if items.isEmpty {
+                        if items.isEmpty && enabled.allSatisfy({ $0.categories.isEmpty }) {
                             loadingOrEmpty
                         } else {
-                            HeroCarousel(items: Array(items.prefix(8)))
+                            if !items.isEmpty { HeroCarousel(items: Array(items.prefix(8))) }
                             KindFilterBar(filter: $filter)
                             if filter == nil {
                                 ForEach(enabled) { site in
                                     SiteRow(site: site) { path.append(SiteRoute(siteID: site.id)) }
                                 }
                             }
-                            VStack(alignment: .leading, spacing: 12) {
-                                SectionHeader(title: "Najnovije", subtitle: "\(items.count) stavki sa \(enabled.count) stranica")
-                                MediaGrid(items: Array(items.prefix(120)))
+                            if !items.isEmpty {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    SectionHeader(title: "Latest", subtitle: "\(items.count) items from \(enabled.count) sites")
+                                    MediaGrid(items: Array(items.prefix(120)))
+                                }
+                                .padding(.horizontal, 16)
                             }
-                            .padding(.horizontal, 16)
                         }
                     }
                 }
@@ -55,7 +57,7 @@ struct HomeView: View {
             .background(NightSky())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: SiteRoute.self) { r in
-                if let s = sites.site(r.siteID) { SiteDetailView(site: s, initialCategory: r.category) }
+                SiteRouteView(route: r)
             }
             .navigationDestination(isPresented: $showHistory) { HistoryView() }
         }
@@ -99,9 +101,9 @@ struct HomeView: View {
             }
             .padding(.horizontal, 16)
         } else {
-            EmptyStateView(symbol: "wand.and.stars", title: "Još nema sadržaja",
-                           message: "Povuci prema dolje za osvježavanje ili provjeri postavke stranica.",
-                           buttonTitle: "Osvježi") { Task { await engine.refreshAll() } }
+            EmptyStateView(symbol: "wand.and.stars", title: "No content yet",
+                           message: "Pull down to refresh or check your site settings.",
+                           buttonTitle: "Refresh") { Task { await engine.refreshAll() } }
                 .padding(.horizontal, 16)
         }
     }
@@ -109,9 +111,9 @@ struct HomeView: View {
     private var greeting: String {
         let h = Calendar.current.component(.hour, from: Date())
         switch h {
-        case 5..<12: return "Dobro jutro"
-        case 12..<18: return "Dobar dan"
-        default: return "Dobra večer"
+        case 5..<12: return "Good morning"
+        case 12..<18: return "Good afternoon"
+        default: return "Good evening"
         }
     }
 }
@@ -119,6 +121,7 @@ struct HomeView: View {
 struct SiteRoute: Hashable {
     var siteID: UUID
     var category: SiteCategory?
+    var showAllCategories = false
 }
 
 struct HeroCarousel: View {
@@ -201,17 +204,19 @@ struct SiteRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 SiteIcon(site: site, size: 30)
-                SectionHeader(title: site.name, subtitle: site.host.uppercased(), actionTitle: "Sve", action: onOpen)
+                SectionHeader(title: site.name, subtitle: site.host.uppercased(), actionTitle: "All", action: onOpen)
             }
             .padding(.horizontal, 16)
-            if items.isEmpty {
+            if items.isEmpty && !site.categories.isEmpty {
+                CategoryRow(site: site, categories: Array(site.categories.prefix(20)))
+            } else if items.isEmpty {
                 Group {
                     if engine.loading.contains(FeedEngine.key(site)) {
                         Shimmer().frame(height: 150)
                     } else if let err = engine.errors[FeedEngine.key(site)] {
                         Text(err).font(Theme.text(13)).foregroundStyle(Theme.muted).frame(maxWidth: .infinity, minHeight: 60)
                     } else {
-                        Text("Nema sadržaja").font(Theme.text(13)).foregroundStyle(Theme.muted).frame(maxWidth: .infinity, minHeight: 60)
+                        Text("No content").font(Theme.text(13)).foregroundStyle(Theme.muted).frame(maxWidth: .infinity, minHeight: 60)
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))

@@ -92,7 +92,7 @@ struct LockView: View {
                     Image(systemName: "lock.fill").font(.system(size: 36, weight: .semibold)).foregroundStyle(Theme.goldGradient)
                 }
                 Wordmark(size: 30)
-                Text(usesPIN ? "Unesi PIN za otključavanje" : "Aplikacija je zaključana")
+                Text(usesPIN ? "Enter PIN to unlock" : "iNUTT is locked")
                     .font(Theme.text(15)).foregroundStyle(Theme.body)
                 if usesPIN {
                     PinDots(count: lock.pinLength, filled: entered.count, shake: shake)
@@ -107,7 +107,7 @@ struct LockView: View {
                             if lock.isLocked { await lock.authenticateDevice() }
                         }
                     } label: {
-                        Label("Otključaj s \(LockManager.biometryName)", systemImage: "faceid")
+                        Label("Unlock with \(LockManager.biometryName)", systemImage: "faceid")
                     }
                     .buttonStyle(GoldButtonStyle())
                 }
@@ -159,11 +159,11 @@ struct PinSetupView: View {
         ZStack {
             NightSky()
             VStack(spacing: 22) {
-                Text(first == nil ? "Unesi novi PIN" : "Ponovi PIN")
+                Text(first == nil ? "Enter a new PIN" : "Repeat PIN")
                     .font(Theme.display(22, .semibold)).foregroundStyle(Theme.ink)
-                Picker("Duljina", selection: $length) {
-                    Text("4 znamenke").tag(4)
-                    Text("6 znamenki").tag(6)
+                Picker("Length", selection: $length) {
+                    Text("4 digits").tag(4)
+                    Text("6 digits").tag(6)
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 260)
@@ -189,7 +189,7 @@ struct PinSetupView: View {
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 dismiss()
             } else {
-                message = "PIN-ovi se ne podudaraju"
+                message = "PINs don't match"
                 withAnimation(.linear(duration: 0.4)) { shake += 1 }
                 first = nil
                 entered = ""

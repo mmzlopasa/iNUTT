@@ -140,13 +140,13 @@ struct MediaContextMenu: View {
         Button {
             library.toggleFavorite(item)
         } label: {
-            Label(library.isFavorite(item) ? "Ukloni iz favorita" : "Dodaj u favorite",
+            Label(library.isFavorite(item) ? "Remove from favorites" : "Add to favorites",
                   systemImage: library.isFavorite(item) ? "heart.slash" : "heart")
         }
         Button {
             Task { await DownloadManager.shared.download(item) }
         } label: {
-            Label("Preuzmi", systemImage: "arrow.down.circle")
+            Label("Download", systemImage: "arrow.down.circle")
         }
     }
 }
@@ -203,7 +203,7 @@ struct KindFilterBar: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                Chip(title: "Sve", symbol: "square.grid.2x2", selected: filter == nil) { filter = nil }
+                Chip(title: "All", symbol: "square.grid.2x2", selected: filter == nil) { filter = nil }
                 ForEach(MediaKind.allCases, id: \.self) { k in
                     Chip(title: k.label, symbol: k.symbol, selected: filter == k) { filter = k }
                 }

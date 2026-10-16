@@ -6,7 +6,7 @@ enum MediaKind: String, Codable, CaseIterable, Hashable {
 
     var label: String {
         switch self {
-        case .image: return "Slike"
+        case .image: return "Images"
         case .gif: return "GIF"
         case .video: return "Video"
         }
@@ -77,6 +77,7 @@ struct MediaItem: Codable, Identifiable, Hashable {
 struct SiteCategory: Codable, Identifiable, Hashable {
     var name: String
     var url: URL
+    var thumbnailURL: URL?
     var id: String { url.absoluteString }
 }
 
@@ -85,9 +86,9 @@ enum RenderMode: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .auto: return "Automatski"
-        case .fast: return "Brzo (HTML)"
-        case .full: return "Puno (JavaScript)"
+        case .auto: return "Automatic"
+        case .fast: return "Fast (HTML)"
+        case .full: return "Full (JavaScript)"
         }
     }
 }

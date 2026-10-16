@@ -22,6 +22,8 @@ enum Scraper {
         let siteDomain = HTML.registrableDomain(site.url.host)
         var seen = Set<String>()
         var items: [MediaItem] = []
+        var cardCategories: [SiteCategory] = []
+        var seenCategories = Set<String>()
 
         func add(_ item: MediaItem) {
             let key = (item.pageURL ?? item.mediaURL ?? item.thumbnailURL)?.absoluteString ?? item.id
@@ -73,6 +75,15 @@ enum Scraper {
             if hrefKind == nil, href.path == baseURL.path, href.query == baseURL.query { continue }
 
             let text = HTML.stripTags(inner)
+            // Category tiles (a thumbnail linking to a category page) become categories, not media.
+            if hrefKind == nil, HTML.registrableDomain(href.host) == siteDomain, isCategoryURL(href) {
+                let name = cleanTitle(attrs["title"] ?? (text.isEmpty ? (alt ?? "") : text), duration: nil)
+                let key = href.absoluteString.lowercased()
+                if !name.isEmpty, name.count <= 60, seenCategories.insert(key).inserted {
+                    cardCategories.append(SiteCategory(name: name, url: href, thumbnailURL: thumb))
+                }
+                continue
+            }
             let duration = HTML.firstMatch(#"(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])"#, in: text)
             let title = cleanTitle(attrs["title"] ?? alt ?? text, duration: duration)
             let lowerInner = inner.lowercased() + " " + attrText.lowercased()
@@ -131,7 +142,9 @@ enum Scraper {
         }
 
         result.items = items
-        result.categories = categories(html: html, base: baseURL, siteDomain: siteDomain)
+        let textCategories = categories(html: html, base: baseURL, siteDomain: siteDomain)
+            .filter { !seenCategories.contains($0.url.absoluteString.lowercased()) }
+        result.categories = cardCategories + textCategories
         result.nextPage = nextPage(html: html, current: baseURL)
         return result
     }
@@ -419,20 +432,23 @@ enum Scraper {
         return out
     }
 
+    static let categoryPathPattern = #"/(categor(?:y|ies)|cats?|tags?|channels?|genres?|collections?|topics?|sections?|niches?|albums?|boards?|playlists?|c|r)/[^/?#]+/?$"#
+
+    static func isCategoryURL(_ u: URL) -> Bool {
+        let p = u.path as NSString
+        return HTML.regex(categoryPathPattern, [.caseInsensitive]).firstMatch(in: u.path, range: NSRange(location: 0, length: p.length)) != nil
+    }
+
     static func categories(html: String, base: URL, siteDomain: String) -> [SiteCategory] {
         var out: [SiteCategory] = []
         var seen = Set<String>()
-        let catPath = HTML.regex(#"/(categor(?:y|ies)|cats?|tags?|channels?|genres?|collections?|topics?|sections?|niches?|albums?|boards?|galleries|gallery|c|t|r)/[^/?#]+/?$"#, [.caseInsensitive])
 
         func consider(_ href: String?, _ inner: String, strict: Bool) {
             guard let u = HTML.resolve(href, base: base), HTML.registrableDomain(u.host) == siteDomain else { return }
             if u.absoluteString == base.absoluteString { return }
             let name = HTML.stripTags(inner)
             guard name.count >= 2, name.count <= 40, name.rangeOfCharacter(from: .letters) != nil else { return }
-            if strict {
-                let p = u.path as NSString
-                guard catPath.firstMatch(in: u.path, range: NSRange(location: 0, length: p.length)) != nil else { return }
-            }
+            if strict { guard isCategoryURL(u) else { return } }
             let key = u.absoluteString.lowercased()
             guard !seen.contains(key) else { return }
             seen.insert(key)

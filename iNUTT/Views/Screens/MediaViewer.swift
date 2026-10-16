@@ -226,8 +226,8 @@ struct MediaPage: View {
             } else if failed {
                 VStack(spacing: 14) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 34)).foregroundStyle(Theme.gold)
-                    Text("Sadržaj se ne može učitati").font(Theme.text(15, .medium)).foregroundStyle(Theme.ink)
-                    Button("Pokušaj ponovno") { Task { await load() } }.buttonStyle(GhostButtonStyle())
+                    Text("Couldn't load this content").font(Theme.text(15, .medium)).foregroundStyle(Theme.ink)
+                    Button("Try again") { Task { await load() } }.buttonStyle(GhostButtonStyle())
                 }
             } else {
                 placeholder

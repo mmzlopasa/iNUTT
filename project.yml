@@ -46,8 +46,8 @@ targets:
           NSAllowsArbitraryLoads: true
           NSAllowsArbitraryLoadsForMedia: true
           NSAllowsArbitraryLoadsInWebContent: true
-        NSFaceIDUsageDescription: iNUTT koristi Face ID za otključavanje aplikacije.
-        NSPhotoLibraryAddUsageDescription: iNUTT sprema preuzete slike, GIF-ove i videozapise u Fotografije.
+        NSFaceIDUsageDescription: iNUTT uses Face ID to unlock the app.
+        NSPhotoLibraryAddUsageDescription: iNUTT saves downloaded images, GIFs and videos to Photos.
         UIBackgroundModes:
           - fetch
           - processing

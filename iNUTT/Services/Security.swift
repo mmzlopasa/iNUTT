@@ -72,18 +72,18 @@ final class LockManager: ObservableObject {
     func authenticateBiometric() async {
         guard AppSettings.shared.faceIDEnabled, !isAuthenticating else { return }
         let ctx = LAContext()
-        ctx.localizedFallbackTitle = hasPIN && AppSettings.shared.pinEnabled ? "Unesi PIN" : ""
+        ctx.localizedFallbackTitle = hasPIN && AppSettings.shared.pinEnabled ? "Enter PIN" : ""
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else { return }
         isAuthenticating = true
         defer { isAuthenticating = false }
-        let ok = (try? await ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Otključaj iNUTT")) ?? false
+        let ok = (try? await ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Unlock iNUTT")) ?? false
         if ok { isLocked = false }
     }
 
     /// Fallback when Face ID is on but no PIN is set: use the device passcode.
     func authenticateDevice() async {
         let ctx = LAContext()
-        let ok = (try? await ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Otključaj iNUTT")) ?? false
+        let ok = (try? await ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock iNUTT")) ?? false
         if ok { isLocked = false }
     }
 

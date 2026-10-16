@@ -6,11 +6,11 @@ enum AppTab: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "Početna"
-        case .sites: return "Stranice"
-        case .search: return "Traži"
-        case .favorites: return "Favoriti"
-        case .settings: return "Postavke"
+        case .home: return "Home"
+        case .sites: return "Sites"
+        case .search: return "Search"
+        case .favorites: return "Favorites"
+        case .settings: return "Settings"
         }
     }
 

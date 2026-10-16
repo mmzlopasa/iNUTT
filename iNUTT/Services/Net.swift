@@ -8,8 +8,8 @@ enum NetError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .badStatus(let c): return "Stranica je vratila grešku \(c)."
-        case .empty: return "Stranica nema sadržaja."
+        case .badStatus(let c): return "The site returned error \(c)."
+        case .empty: return "The page is empty."
         }
     }
 }
@@ -30,7 +30,7 @@ enum Net {
         c.httpMaximumConnectionsPerHost = 6
         c.httpAdditionalHeaders = [
             "User-Agent": userAgent,
-            "Accept-Language": "hr-HR,hr;q=0.9,en-US;q=0.8,en;q=0.7"
+            "Accept-Language": "en-US,en;q=0.9"
         ]
         c.httpCookieAcceptPolicy = .always
         c.httpShouldSetCookies = true

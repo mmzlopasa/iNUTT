@@ -178,7 +178,7 @@ final class FeedEngine: ObservableObject {
             result = Scraper.parseListing(html: text, baseURL: finalURL, site: site, categoryName: categoryName)
             staticOK = true
         }
-        let needsRender = site.renderMode == .full || (site.renderMode == .auto && result.items.count < 6)
+        let needsRender = site.renderMode == .full || (site.renderMode == .auto && result.items.count < 6 && result.categories.count < 6)
         if allowRender && needsRender {
             if let html = await PageRenderer.shared.render(url) {
                 let r2 = Scraper.parseListing(html: html, baseURL: url, site: site, categoryName: categoryName)

@@ -20,11 +20,11 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink { ManageSitesView() } label: {
-                        row("globe", "Upravljaj stranicama", value: "\(sites.sites.count)/\(Limits.maxSites)")
+                        row("globe", "Manage sites", value: "\(sites.sites.count)/\(Limits.maxSites)")
                     }
-                    Button { showAdd = true } label: { row("plus.circle.fill", "Dodaj linkove") }
+                    Button { showAdd = true } label: { row("plus.circle.fill", "Add links") }
                         .disabled(!sites.canAdd)
-                } header: { sectionTitle("Stranice") }
+                } header: { sectionTitle("Sites") }
                 .listRowBackground(rowBG)
 
                 Section {
@@ -34,27 +34,27 @@ struct SettingsView: View {
                     .disabled(!LockManager.biometryAvailable && !settings.faceIDEnabled)
 
                     if lock.hasPIN && settings.pinEnabled {
-                        NavigationLink { PinSetupView() } label: { row("lock.rotation", "Promijeni PIN") }
-                        Button(role: .destructive) { confirmRemovePIN = true } label: { row("lock.open", "Isključi PIN", tint: Theme.err) }
+                        NavigationLink { PinSetupView() } label: { row("lock.rotation", "Change PIN") }
+                        Button(role: .destructive) { confirmRemovePIN = true } label: { row("lock.open", "Turn off PIN", tint: Theme.err) }
                     } else {
-                        NavigationLink { PinSetupView() } label: { row("lock.fill", "Postavi PIN zaključavanje") }
+                        NavigationLink { PinSetupView() } label: { row("lock.fill", "Set up PIN lock") }
                     }
-                    Toggle(isOn: $settings.lockOnBackground) { row("moon.zzz.fill", "Zaključaj pri izlasku") }
-                    Toggle(isOn: $settings.hideInSwitcher) { row("eye.slash.fill", "Sakrij sadržaj u multitaskingu") }
-                } header: { sectionTitle("Sigurnost") } footer: {
-                    Text("Kad je uključeno, iNUTT traži \(LockManager.biometryName) ili PIN pri svakom otvaranju.")
+                    Toggle(isOn: $settings.lockOnBackground) { row("moon.zzz.fill", "Lock when leaving") }
+                    Toggle(isOn: $settings.hideInSwitcher) { row("eye.slash.fill", "Hide content in app switcher") }
+                } header: { sectionTitle("Security") } footer: {
+                    Text("When enabled, iNUTT asks for \(LockManager.biometryName) or your PIN every time it opens.")
                         .font(Theme.text(12)).foregroundStyle(Theme.muted)
                 }
                 .listRowBackground(rowBG)
 
                 Section {
                     NavigationLink { HistoryView() } label: {
-                        row("clock.arrow.circlepath", "Pregled i pretraga povijesti", value: "\(library.history.count)")
+                        row("clock.arrow.circlepath", "View and search history", value: "\(library.history.count)")
                     }
-                    Toggle(isOn: $settings.historyEnabled) { row("record.circle", "Spremaj povijest") }
-                    Button(role: .destructive) { library.clearHistory() } label: { row("trash", "Očisti povijest", tint: Theme.err) }
+                    Toggle(isOn: $settings.historyEnabled) { row("record.circle", "Save history") }
+                    Button(role: .destructive) { library.clearHistory() } label: { row("trash", "Clear history", tint: Theme.err) }
                         .disabled(library.history.isEmpty)
-                } header: { sectionTitle("Povijest") }
+                } header: { sectionTitle("History") }
                 .listRowBackground(rowBG)
 
                 Section {
@@ -63,32 +63,32 @@ struct SettingsView: View {
                         Text("1440p").tag(1440)
                         Text("1080p").tag(1080)
                         Text("720p").tag(720)
-                    } label: { row("4k.tv", "Maksimalna rezolucija") }
-                    Toggle(isOn: $settings.autoplay) { row("play.circle", "Automatska reprodukcija") }
-                    Toggle(isOn: $settings.loopVideos) { row("repeat", "Ponavljaj videe") }
-                    Toggle(isOn: $settings.startMuted) { row("speaker.slash", "Pokreni bez zvuka") }
-                } header: { sectionTitle("Reprodukcija") }
+                    } label: { row("4k.tv", "Maximum resolution") }
+                    Toggle(isOn: $settings.autoplay) { row("play.circle", "Autoplay") }
+                    Toggle(isOn: $settings.loopVideos) { row("repeat", "Loop videos") }
+                    Toggle(isOn: $settings.startMuted) { row("speaker.slash", "Start muted") }
+                } header: { sectionTitle("Playback") }
                 .listRowBackground(rowBG)
 
                 Section {
-                    Toggle(isOn: $settings.saveToPhotos) { row("photo.on.rectangle", "Spremaj u Fotografije") }
-                    Toggle(isOn: $settings.backgroundRefresh) { row("arrow.triangle.2.circlepath", "Osvježavanje u pozadini") }
+                    Toggle(isOn: $settings.saveToPhotos) { row("photo.on.rectangle", "Save to Photos") }
+                    Toggle(isOn: $settings.backgroundRefresh) { row("arrow.triangle.2.circlepath", "Background refresh") }
                     Button { confirmClearCache = true } label: {
-                        row("internaldrive", "Očisti predmemoriju", value: ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
+                        row("internaldrive", "Clear cache", value: ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
                     }
-                } header: { sectionTitle("Preuzimanja i pohrana") } footer: {
+                } header: { sectionTitle("Downloads & storage") } footer: {
                     Text("Preuzimanja se uvijek spremaju i u aplikaciju Datoteke › iNUTT.")
                         .font(Theme.text(12)).foregroundStyle(Theme.muted)
                 }
                 .listRowBackground(rowBG)
 
                 Section {
-                    row("info.circle", "Verzija", value: appVersion)
+                    row("info.circle", "Version", value: appVersion)
                     Link(destination: URL(string: "https://scyde.dev")!) {
                         row("hammer.fill", "Developer", value: "SCYDE")
                     }
-                } header: { sectionTitle("O aplikaciji") } footer: {
-                    Text("iNUTT · izradio SCYDE · scyde.dev")
+                } header: { sectionTitle("About") } footer: {
+                    Text("iNUTT · made by SCYDE · scyde.dev")
                         .font(Theme.mono(11)).foregroundStyle(Theme.muted)
                         .frame(maxWidth: .infinity).padding(.top, 10)
                 }
@@ -100,15 +100,15 @@ struct SettingsView: View {
             .toolbar(.hidden, for: .navigationBar)
             .tint(Theme.gold)
             .task { cacheSize = await Task.detached { ImagePipeline.shared.diskUsage() }.value }
-            .confirmationDialog("Očistiti predmemoriju?", isPresented: $confirmClearCache, titleVisibility: .visible) {
-                Button("Očisti", role: .destructive) {
+            .confirmationDialog("Clear cache?", isPresented: $confirmClearCache, titleVisibility: .visible) {
+                Button("Clear", role: .destructive) {
                     ImagePipeline.shared.clear()
                     engine.clearCache()
                     cacheSize = 0
                 }
-            } message: { Text("Slike i spremljeni sadržaj će se ponovno učitati.") }
-            .confirmationDialog("Isključiti PIN?", isPresented: $confirmRemovePIN, titleVisibility: .visible) {
-                Button("Isključi PIN", role: .destructive) { lock.setPIN(nil) }
+            } message: { Text("Images and saved content will be loaded again.") }
+            .confirmationDialog("Turn off PIN?", isPresented: $confirmRemovePIN, titleVisibility: .visible) {
+                Button("Turn off PIN", role: .destructive) { lock.setPIN(nil) }
             }
         }
         .sheet(isPresented: $showAdd) { AddSiteView() }
@@ -124,7 +124,7 @@ struct SettingsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("POSTAVKE").font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
+            Text("SETTINGS").font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
             Wordmark(size: 30)
         }
         .padding(.vertical, 6)
@@ -175,12 +175,12 @@ struct ManageSitesView: View {
                 }
                 .onMove { sites.move(from: $0, to: $1) }
             } header: {
-                Text("\(sites.sites.count) od \(Limits.maxSites) stranica").font(Theme.mono(11)).foregroundStyle(Theme.gold)
+                Text("\(sites.sites.count) of \(Limits.maxSites) sites").font(Theme.mono(11)).foregroundStyle(Theme.gold)
             }
         }
         .scrollContentBackground(.hidden)
         .background(NightSky())
-        .navigationTitle("Stranice")
+        .navigationTitle("Sites")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -211,8 +211,8 @@ struct AddSiteView: View {
             Form {
                 Section {
                     Picker("", selection: $bulk) {
-                        Text("Jedan link").tag(false)
-                        Text("Više linkova").tag(true)
+                        Text("Single link").tag(false)
+                        Text("Multiple links").tag(true)
                     }
                     .pickerStyle(.segmented)
                     .listRowBackground(Color.clear)
@@ -226,40 +226,40 @@ struct AddSiteView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .scrollContentBackground(.hidden)
-                    } header: { Text("Jedan link po retku") } footer: {
-                        Text("Može još \(Limits.maxSites - sites.sites.count) stranica.")
+                    } header: { Text("One link per line") } footer: {
+                        Text("\(Limits.maxSites - sites.sites.count) sites left.")
                     }
                     .listRowBackground(Theme.navy.opacity(0.6))
                 } else {
                     Section {
-                        TextField("https://primjer.com/galerija", text: $urlText)
+                        TextField("https://example.com/gallery", text: $urlText)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .font(Theme.mono(14))
-                        TextField("Naziv (neobavezno)", text: $name)
-                    } header: { Text("Link stranice") } footer: {
-                        Text("Može i link na kategoriju, RSS feed ili subreddit.")
+                        TextField("Name (optional)", text: $name)
+                    } header: { Text("Site link") } footer: {
+                        Text("A category page, RSS feed or subreddit works too.")
                     }
                     .listRowBackground(Theme.navy.opacity(0.6))
 
                     Section {
-                        Picker("Učitavanje", selection: $mode) {
+                        Picker("Loading", selection: $mode) {
                             ForEach(RenderMode.allCases) { Text($0.label).tag($0) }
                         }
-                        TextField("Predložak pretrage, npr. https://site.com/search?q={q}", text: $searchTemplate)
+                        TextField("Search template, e.g. https://site.com/search?q={q}", text: $searchTemplate)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .font(Theme.mono(12))
-                    } header: { Text("Napredno") }
+                    } header: { Text("Advanced") }
                     .listRowBackground(Theme.navy.opacity(0.6))
 
                     if let p = preview {
                         Section {
                             HStack(spacing: 16) {
-                                stat("\(p.items.count)", "stavki")
-                                stat("\(p.categories.count)", "kategorija")
-                                stat("\(p.items.filter { $0.kind == .video }.count)", "videa")
+                                stat("\(p.items.count)", "items")
+                                stat("\(p.categories.count)", "categories")
+                                stat("\(p.items.filter { $0.kind == .video }.count)", "videos")
                             }
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 8) {
@@ -270,7 +270,7 @@ struct AddSiteView: View {
                                     }
                                 }
                             }
-                        } header: { Text("Pregled") }
+                        } header: { Text("Preview") }
                         .listRowBackground(Theme.navy.opacity(0.6))
                     }
                 }
@@ -285,7 +285,7 @@ struct AddSiteView: View {
                         HStack {
                             Spacer()
                             if checking { ProgressView().tint(Theme.onGold) }
-                            Text(bulk ? "Dodaj sve" : (preview == nil ? "Provjeri i dodaj" : "Spremi stranicu"))
+                            Text(bulk ? "Add all" : (preview == nil ? "Check & add" : "Save site"))
                             Spacer()
                         }
                     }
@@ -296,10 +296,10 @@ struct AddSiteView: View {
             }
             .scrollContentBackground(.hidden)
             .background(NightSky())
-            .navigationTitle("Dodaj stranicu")
+            .navigationTitle("Add site")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Odustani") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
             .onChange(of: urlText) { _ in preview = nil; error = nil }
         }
@@ -315,9 +315,9 @@ struct AddSiteView: View {
     private func submit() {
         error = nil
         if bulk { addBulk(); return }
-        guard let url = SiteStore.normalize(urlText) else { error = "Neispravan link."; return }
-        guard sites.canAdd else { error = "Dosegnut je maksimum od \(Limits.maxSites) stranica."; return }
-        var site = Site(name: name.isEmpty ? (url.host?.replacingOccurrences(of: "www.", with: "") ?? "Stranica") : name, url: url)
+        guard let url = SiteStore.normalize(urlText) else { error = "Invalid link."; return }
+        guard sites.canAdd else { error = "You have reached the maximum of \(Limits.maxSites) sites."; return }
+        var site = Site(name: name.isEmpty ? (url.host?.replacingOccurrences(of: "www.", with: "") ?? "Site") : name, url: url)
         site.renderMode = mode
         site.searchTemplate = searchTemplate.isEmpty ? nil : searchTemplate
 
@@ -331,7 +331,7 @@ struct AddSiteView: View {
             do {
                 let r = try await FeedEngine.fetchListing(url: url, base: url, site: site, categoryName: nil, allowRender: true)
                 if r.items.isEmpty && r.categories.isEmpty {
-                    error = "Na stranici nije pronađen sadržaj. Probaj način \"Puno (JavaScript)\" ili drugi link."
+                    error = "No content found on this page. Try the \"Full (JavaScript)\" mode or another link."
                     preview = r
                 } else {
                     preview = r
@@ -340,7 +340,7 @@ struct AddSiteView: View {
                     }
                 }
             } catch {
-                self.error = "Stranica se ne može učitati: \(error.localizedDescription)"
+                self.error = "Couldn't load the site: \(error.localizedDescription)"
             }
         }
     }
@@ -350,7 +350,7 @@ struct AddSiteView: View {
         if !name.isEmpty { s.name = name }
         s.categories = p.categories
         s.iconURL = p.iconURL
-        guard sites.add(s) else { error = "Stranica je već dodana."; return }
+        guard sites.add(s) else { error = "This site is already added."; return }
         Task { await engine.refresh(s, nil) }
         dismiss()
     }
@@ -360,10 +360,10 @@ struct AddSiteView: View {
         var added: [Site] = []
         for l in lines {
             guard sites.canAdd, let u = SiteStore.normalize(l) else { continue }
-            let s = Site(name: u.host?.replacingOccurrences(of: "www.", with: "") ?? "Stranica", url: u)
+            let s = Site(name: u.host?.replacingOccurrences(of: "www.", with: "") ?? "Site", url: u)
             if sites.add(s) { added.append(s) }
         }
-        if added.isEmpty { error = "Nijedan link nije dodan."; return }
+        if added.isEmpty { error = "No links were added."; return }
         Task { await engine.refreshAll() }
         dismiss()
     }
@@ -384,31 +384,31 @@ struct EditSiteView: View {
 
     var body: some View {
         Form {
-            Section("Osnovno") {
-                TextField("Naziv", text: $draft.name)
+            Section("General") {
+                TextField("Name", text: $draft.name)
                 TextField("Link", text: Binding(get: { draft.url.absoluteString }, set: { if let u = SiteStore.normalize($0) { draft.url = u } }))
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .font(Theme.mono(13))
-                Toggle("Uključena", isOn: $draft.enabled)
+                Toggle("Enabled", isOn: $draft.enabled)
             }
             .listRowBackground(Theme.navy.opacity(0.6))
 
-            Section("Učitavanje") {
-                Picker("Način", selection: $draft.renderMode) {
+            Section("Loading") {
+                Picker("Mode", selection: $draft.renderMode) {
                     ForEach(RenderMode.allCases) { Text($0.label).tag($0) }
                 }
-                TextField("Predložak pretrage ({q})", text: Binding(get: { draft.searchTemplate ?? "" }, set: { draft.searchTemplate = $0.isEmpty ? nil : $0 }))
+                TextField("Search template ({q})", text: Binding(get: { draft.searchTemplate ?? "" }, set: { draft.searchTemplate = $0.isEmpty ? nil : $0 }))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .font(Theme.mono(12))
             }
             .listRowBackground(Theme.navy.opacity(0.6))
 
-            Section("Kategorije (\(draft.categories.count))") {
+            Section("Categories (\(draft.categories.count))") {
                 if draft.categories.isEmpty {
-                    Text("Nisu pronađene kategorije.").foregroundStyle(Theme.muted)
+                    Text("No categories found.").foregroundStyle(Theme.muted)
                 }
                 ForEach(draft.categories) { c in
                     Text(c.name).font(Theme.text(14))
@@ -418,7 +418,7 @@ struct EditSiteView: View {
             .listRowBackground(Theme.navy.opacity(0.6))
 
             Section {
-                Button(role: .destructive) { confirmDelete = true } label: { Text("Ukloni stranicu") }
+                Button(role: .destructive) { confirmDelete = true } label: { Text("Remove site") }
             }
             .listRowBackground(Theme.navy.opacity(0.6))
         }
@@ -428,7 +428,7 @@ struct EditSiteView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Spremi") {
+                Button("Save") {
                     let urlChanged = draft.url != site.url || draft.renderMode != site.renderMode
                     sites.update(draft)
                     if urlChanged {
@@ -440,8 +440,8 @@ struct EditSiteView: View {
                 }
             }
         }
-        .confirmationDialog("Ukloniti \(draft.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Ukloni", role: .destructive) {
+        .confirmationDialog("Remove \(draft.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Remove", role: .destructive) {
                 engine.forget(siteID: site.id)
                 sites.remove([site.id])
                 dismiss()
