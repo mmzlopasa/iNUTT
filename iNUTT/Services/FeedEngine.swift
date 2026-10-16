@@ -209,7 +209,8 @@ final class FeedEngine: ObservableObject {
                 var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
                 comps?.host = "www.reddit.com"
                 comps?.path = path + "/.rss"
-                comps?.queryItems = comps?.queryItems?.filter { $0.name == "t" || $0.name == "q" || $0.name == "after" }
+                let keep = comps?.queryItems?.filter { $0.name == "t" || $0.name == "q" || $0.name == "after" }
+                comps?.queryItems = keep
                 guard let rss = comps?.url, let (data, resp) = try? await Net.fetch(rss) else { throw error }
                 var r = Scraper.parseFeed(xml: Net.text(data, response: resp), baseURL: rss, site: site, categoryName: categoryName)
                 if r.items.isEmpty { throw error }
