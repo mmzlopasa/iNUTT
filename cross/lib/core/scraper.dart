@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'html.dart';
 import 'models.dart';
+import 'net.dart';
+import 'site_adapters.dart';
 
 /// Turns arbitrary pages (HTML, RSS/Atom, Reddit JSON) into media items and categories.
 class Scraper {
@@ -27,6 +29,8 @@ class Scraper {
     final items = <MediaItem>[];
     final cardCategories = <SiteCategory>[];
     final seenCategories = <String>{};
+    // Cards that open another site; used when the site is an aggregator that only links out.
+    final outbound = <MediaItem>[];
 
     void add(MediaItem item) {
       final key = (item.pageUrl ?? item.mediaUrl ?? item.thumbnailUrl)?.toString() ?? item.id;
@@ -81,7 +85,7 @@ class Scraper {
       if (thumb == null && hrefKind == null) continue;
       if (thumb != null && isJunkImage(thumb)) continue;
       final sameSite = Html.registrableDomain(href.host) == siteDomain;
-      if (hrefKind == null && !sameSite && !isKnownMediaHost(href.host)) continue;
+      final isOutbound = hrefKind == null && !sameSite && !isKnownMediaHost(href.host);
       if (hrefKind == null && href.path == baseUrl.path && href.query == baseUrl.query) continue;
 
       final text = Html.stripTags(inner);
@@ -123,7 +127,7 @@ class Scraper {
         kind = MediaKind.video;
       }
 
-      add(MediaItem(
+      final item = MediaItem(
         siteId: site.id,
         siteName: site.name,
         title: title,
@@ -133,8 +137,15 @@ class Scraper {
         kind: kind,
         duration: duration,
         categoryName: categoryName,
-      ));
+      );
+      if (isOutbound) {
+        // Only real video cards: ads rarely carry a duration or a title.
+        if (thumb != null && (duration != null || (videoHint && title.isNotEmpty))) outbound.add(item);
+      } else {
+        add(item);
+      }
     }
+    if (items.length < 6 && outbound.length >= 4) outbound.forEach(add);
 
     // 2) Inline videos on the page itself.
     for (final m in Html.matches(r'<video\b([^>]*)>(.*?)</video>', html)) {
@@ -211,8 +222,10 @@ class Scraper {
       final s = u.toString().toLowerCase();
       final ext = u.path.toLowerCase().split('.').last;
       if (!['mp4', 'm4v', 'mov', 'm3u8', 'webm'].contains(ext) && !s.contains('.m3u8') && !s.contains('.mp4')) return;
-      if (videos.any((v) => v.$1 == u)) return;
-      videos.add((u, quality(u, label)));
+      if (videos.any((v) => v.$1 == u) || PageRenderer.isAd(u)) return;
+      // Hover previews and trailers are only a last resort.
+      final isPreview = ['preview', 'trailer', 'teaser', '/thumbs/', 'thumb_', '_thumb'].any(s.contains);
+      videos.add((u, isPreview ? 1 : quality(u, label)));
     }
 
     for (final m in Html.matches(r'<video\b([^>]*)>(.*?)</video>', html)) {
@@ -226,9 +239,30 @@ class Scraper {
     for (final key in ['og:video:secure_url', 'og:video:url', 'og:video', 'twitter:player:stream']) {
       addVideo(meta(key, html));
     }
+    // Players keep their files in scripts, often JSON-escaped.
+    final flat = html.replaceAll(r'\/', '/').replaceAll(r'\u002F', '/').replaceAll(r'\u0026', '&').replaceAll('&amp;', '&');
+    // Pornhub-family players: one entry per quality.
+    for (final m in Html.matches(r'\{[^{}]*?"videoUrl"\s*:\s*"([^"]+)"[^{}]*\}', flat, limit: 30)) {
+      final url = m[1];
+      if (url == null || url.contains('get_media')) continue;
+      addVideo(url, label: Html.first(r'"quality"\s*:\s*"?(\d{3,4})', m[0] ?? ''));
+    }
+    // XVideos-family players.
+    for (final (pattern, label) in [
+      (r'''setVideoHLS\(\s*['"]([^'"]+)''', '1080'),
+      (r'''setVideoUrlHigh\(\s*['"]([^'"]+)''', '720'),
+      (r'''setVideoUrlLow\(\s*['"]([^'"]+)''', '360'),
+    ]) {
+      final u = Html.first(pattern, flat);
+      if (u != null) addVideo(u, label: label);
+    }
+    // KVS players.
+    for (final (u, label) in SiteAdapters.kvsVideos(flat)) {
+      addVideo(u, label: label);
+    }
     const jsonKeys =
-        r'''["'](?:contentUrl|file|src|videoUrl|video_url|mp4|hls|hlsUrl|url|source|stream_url|videoSrc)["']\s*:\s*["']([^"']+\.(?:mp4|m3u8|webm|mov)[^"']*)["']''';
-    for (final m in Html.matches(jsonKeys, html, limit: 40)) {
+        r'''["']?(?:contentUrl|embedUrl|file|src|videoUrl|video_url|mp4|hls|hlsUrl|hls_url|url|source|stream_url|streamUrl|videoSrc|video_src|playlist|m3u8|high|low)["']?\s*:\s*["']([^"']+\.(?:mp4|m3u8|webm|mov)[^"']*)["']''';
+    for (final m in Html.matches(jsonKeys, flat, limit: 60)) {
       addVideo(m[1]);
     }
     for (final m in Html.matches(r'<source\b([^>]*)>', html, limit: 20)) {
@@ -259,7 +293,7 @@ class Scraper {
       if (m != null && (m.$2 >= 720 || hls.isEmpty)) {
         best = m.$1;
       } else {
-        best = hls.isNotEmpty ? hls.first.$1 : m?.$1;
+        best = pick(hls)?.$1 ?? m?.$1;
       }
       if (best != null) {
         return ResolvedMedia(url: best, kind: MediaKind.video, referer: pageUrl, gallery: poster == null ? const [] : [poster]);
@@ -549,7 +583,8 @@ class Scraper {
       if (u != null) return u;
     }
     final order = preferSmall
-        ? ['data-src', 'data-original', 'data-lazy-src', 'data-lazy', 'data-thumb', 'data-url', 'src', 'data-full', 'data-large']
+        ? ['data-src', 'data-original', 'data-lazy-src', 'data-lazy', 'data-mediumthumb', 'data-thumb_url', 'data-thumb-url',
+           'data-thumb', 'data-image', 'data-webp', 'data-poster', 'data-url', 'src', 'data-full', 'data-large']
         : ['data-full', 'data-large', 'data-zoom-image', 'data-hi-res', 'data-original', 'data-src', 'data-lazy-src', 'data-lazy', 'src'];
     for (final key in order) {
       final u = Html.resolve(a[key], base);
@@ -576,7 +611,8 @@ class Scraper {
 
   static bool isVideoPath(String p) {
     final l = p.toLowerCase();
-    return ['/video', '/videos/', '/watch', '/v/', '/embed/', '/movie', '/clip', '/vod/', '/play/'].any(l.contains);
+    return ['/video', '/videos/', '/watch', '/v/', '/embed/', '/movie', '/clip', '/vod/', '/play/', 'view_video', '/porn-video', '/sex-video', '/scene']
+        .any(l.contains);
   }
 
   static bool isKnownMediaHost(String? host) {

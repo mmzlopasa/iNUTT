@@ -7,6 +7,7 @@ import 'image_cache.dart';
 import 'models.dart';
 import 'net.dart';
 import 'scraper.dart';
+import 'site_adapters.dart';
 import 'stores.dart';
 
 /// Loads, caches and refreshes content from every site. Cached feeds are shown instantly on launch.
@@ -322,17 +323,35 @@ class FeedEngine extends ChangeNotifier {
         return r;
       }
     }
+    // App-only sites: read their feed API.
+    if (SiteAdapters.isFikFap(url)) {
+      try {
+        return await SiteAdapters.fikfapFeed(site, url.queryParameters['inuttAfter']);
+      } catch (_) {}
+    }
     var result = ScrapeResult();
     var staticOk = false;
+    Object? staticError;
     if (site.renderMode != RenderMode.full || !allowRender) {
-      final f = await Net.fetch(url);
-      final text = f.text;
-      if (Scraper.looksLikeFeed(text)) return _parseFeedOff(text, f.finalUrl, site, categoryName);
-      result = await _parseListingOff(text, f.finalUrl, site, categoryName);
-      staticOk = true;
+      try {
+        final f = await Net.fetch(url);
+        if (SiteAdapters.looksLikeJson(f.bytes)) {
+          final r = await _parseJsonOff(f.text, f.finalUrl, site, categoryName);
+          if (r.items.isNotEmpty) return r;
+        }
+        final text = f.text;
+        if (Scraper.looksLikeFeed(text)) return await _parseFeedOff(text, f.finalUrl, site, categoryName);
+        result = await _parseListingOff(text, f.finalUrl, site, categoryName);
+        staticOk = true;
+      } catch (e) {
+        // Blocked or empty for plain requests (bot checks, app shells): the browser may still get it.
+        if (!allowRender) rethrow;
+        staticError = e;
+      }
     }
     final needsRender = site.renderMode == RenderMode.full ||
         (site.renderMode == RenderMode.auto && result.items.length < 6 && result.categories.length < 6);
+    if (staticError != null && !needsRender) throw staticError;
     if (allowRender && needsRender) {
       final html = await PageRenderer.shared.render(url);
       if (html != null) {
@@ -345,7 +364,7 @@ class FeedEngine extends ChangeNotifier {
         result.iconUrl ??= r2.iconUrl;
         result.title ??= r2.title;
       } else if (!staticOk) {
-        throw NetException('The page is empty.');
+        throw staticError ?? NetException('The page is empty.');
       }
     }
     return result;
@@ -354,6 +373,8 @@ class FeedEngine extends ChangeNotifier {
   // Parsing runs in its own isolate so scrolling never stutters while pages load.
   static Future<ScrapeResult> _parseListingOff(String html, Uri url, Site site, String? cat) =>
       Isolate.run(() => Scraper.parseListing(html, url, site, cat));
+  static Future<ScrapeResult> _parseJsonOff(String text, Uri url, Site site, String? cat) =>
+      Isolate.run(() => SiteAdapters.parseJsonListing(text, url, site, cat));
   static Future<ScrapeResult> _parseFeedOff(String xml, Uri url, Site site, String? cat) =>
       Isolate.run(() => Scraper.parseFeed(xml, url, site, cat));
   static Future<ScrapeResult> _parseRedditOff(List<int> data, Uri url, Site site, String? cat) =>

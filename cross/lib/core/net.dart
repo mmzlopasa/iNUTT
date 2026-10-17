@@ -6,6 +6,8 @@ import 'dart:ui' show Size;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import 'site_adapters.dart';
+
 class NetException implements Exception {
   final String message;
   NetException(this.message);
@@ -47,6 +49,8 @@ class Net {
     req.headers.set(HttpHeaders.acceptLanguageHeader, 'en-US,en;q=0.9');
     req.headers.set(HttpHeaders.acceptHeader, 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7');
     if (referer != null) req.headers.set('Referer', referer.toString());
+    // Adult sites show their content only once the age gate has been passed.
+    req.headers.set(HttpHeaders.cookieHeader, SiteAdapters.cookieHeader);
     headers?.forEach(req.headers.set);
     final resp = await req.close().timeout(const Duration(seconds: 25));
     if (resp.statusCode >= 400) {
@@ -86,6 +90,8 @@ class Net {
   static Map<String, String> playerHeaders(Uri? referer) => {
         'User-Agent': userAgent,
         if (referer != null) 'Referer': referer.toString(),
+        // CDNs that check where a stream is played from also look at the origin.
+        if (referer != null && referer.hasScheme) 'Origin': '${referer.scheme}://${referer.host}',
       };
 }
 
@@ -117,6 +123,14 @@ class PageRenderer {
   /// An off-screen web view that starts loading `url`. `loaded` completes when the page finished or failed.
   Future<(HeadlessInAppWebView, Completer<bool>)> _open(Uri url, {required bool media}) async {
     final loaded = Completer<bool>();
+    // Adult sites show their content only once the age gate has been passed.
+    try {
+      final jar = CookieManager.instance();
+      final domain = '.${url.host.split('.').reversed.take(2).toList().reversed.join('.')}';
+      for (final e in SiteAdapters.ageCookies.entries) {
+        await jar.setCookie(url: WebUri.uri(url), name: e.key, value: e.value, domain: domain, path: '/');
+      }
+    } catch (_) {}
     final web = HeadlessInAppWebView(
       initialUrlRequest: URLRequest(url: WebUri.uri(url)),
       initialSize: const Size(390, 844),
@@ -161,6 +175,9 @@ class PageRenderer {
       web = w;
       final ok = await loaded.future.timeout(const Duration(seconds: 14), onTimeout: () => false);
       if (!ok && await w.webViewController?.getUrl() == null) return null;
+      if (await _js(w, SiteAdapters.ageGateScript) == 2) {
+        await Future<void>.delayed(const Duration(milliseconds: 2500));
+      }
       // Trigger lazy-loaded content.
       for (var i = 0; i < 3; i++) {
         await _js(w, 'window.scrollTo(0, document.body.scrollHeight); 1');
@@ -188,6 +205,7 @@ class PageRenderer {
       final started = DateTime.now();
       while (DateTime.now().difference(started).inMilliseconds < 9000) {
         await Future<void>.delayed(const Duration(milliseconds: 250));
+        await _js(w, SiteAdapters.ageGateScript);
         await _js(w, _playScript);
         final list = await _collect(w, url);
         for (final v in list) {
@@ -233,6 +251,7 @@ class PageRenderer {
       final started = DateTime.now();
       while (DateTime.now().difference(started).inMilliseconds < 10000 && !stop()) {
         await Future<void>.delayed(const Duration(milliseconds: 400));
+        await _js(w, SiteAdapters.ageGateScript);
         await _js(w, _playScript);
         take(await _collect(w, url));
         if (found.isNotEmpty && DateTime.now().difference(started).inMilliseconds > 2500) break;
