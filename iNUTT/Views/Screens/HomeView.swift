@@ -4,7 +4,8 @@ struct HomeView: View {
     @EnvironmentObject private var sites: SiteStore
     @EnvironmentObject private var engine: FeedEngine
     @EnvironmentObject private var viewer: ViewerState
-    @State private var filter: MediaKind?
+    @State private var latestLimit = 120
+    @State private var loadingMore = false
     @State private var showAdd = false
     @State private var showHistory = false
     @EnvironmentObject private var router: Router
@@ -13,7 +14,7 @@ struct HomeView: View {
 
     private var mixed: [MediaItem] {
         let all = engine.mixedFeed(enabled)
-        guard let filter else { return all }
+        guard let filter = router.homeFilter else { return all }
         return all.filter { $0.kind == filter }
     }
 
@@ -33,18 +34,25 @@ struct HomeView: View {
                             loadingOrEmpty
                         } else {
                             if !items.isEmpty { HeroCarousel(items: Array(items.prefix(8))) }
-                            KindFilterBar(filter: $filter)
-                            if filter == nil {
+                            KindFilterBar(filter: $router.homeFilter)
+                            if router.homeFilter == nil {
                                 ForEach(enabled) { site in
                                     SiteRow(site: site) { router.home.append(SiteRoute(siteID: site.id)) }
                                 }
                             }
                             if !items.isEmpty {
                                 VStack(alignment: .leading, spacing: 12) {
-                                    SectionHeader(title: "Latest", subtitle: "\(items.count) items from \(enabled.count) sites")
-                                    MediaGrid(items: Array(items.prefix(120)))
+                                    SectionHeader(title: latestTitle, subtitle: "\(items.count) items from \(enabled.count) sites")
+                                    MediaGrid(items: Array(items.prefix(latestLimit))) { moreLatest(items.count) }
+                                    if loadingMore {
+                                        ProgressView().tint(Theme.gold).frame(maxWidth: .infinity).padding(.vertical, 12)
+                                    }
                                 }
                                 .padding(.horizontal, 16)
+                            } else if let f = router.homeFilter {
+                                EmptyStateView(symbol: f.symbol, title: "No \(f.label) yet",
+                                               message: "None of your sites has shown \(f.label) so far. Pull down to refresh.")
+                                    .padding(.horizontal, 16)
                             }
                         }
                     }
@@ -52,6 +60,7 @@ struct HomeView: View {
                 .padding(.top, 4)
             }
             .refreshable { await engine.refreshAll() }
+            .onChange(of: router.homeFilter) { _ in latestLimit = 120 }
             .tabBarInset()
             .background(NightSky())
             .toolbar(.hidden, for: .navigationBar)
@@ -71,6 +80,25 @@ struct HomeView: View {
                 .environmentObject(DownloadManager.shared)
                 .environmentObject(router)
                 .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var latestTitle: String {
+        router.homeFilter.map { "Latest \($0.label)" } ?? "Latest"
+    }
+
+    /// Shows more of what is loaded, then asks the sites for their next pages.
+    private func moreLatest(_ total: Int) {
+        if latestLimit < total {
+            latestLimit += 120
+            return
+        }
+        guard !loadingMore else { return }
+        loadingMore = true
+        Task {
+            await engine.loadMoreHome(enabled)
+            loadingMore = false
+            latestLimit += 120
         }
     }
 

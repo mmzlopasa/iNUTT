@@ -122,6 +122,8 @@ final class Router: ObservableObject {
     static let shared = Router()
     @Published var tab: AppTab = .home
     @Published var showSettings = false
+    /// The kind of media Home shows; set from the Home tab's long-press menu too.
+    @Published var homeFilter: MediaKind?
     @Published var home = NavigationPath()
     @Published var sites = NavigationPath()
     @Published var search = NavigationPath()

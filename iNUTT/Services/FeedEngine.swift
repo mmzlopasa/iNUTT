@@ -7,17 +7,36 @@ final class FeedEngine: ObservableObject {
     static let shared = FeedEngine()
     static let refreshTaskID = "dev.scyde.inutt.refresh"
 
-    @Published private(set) var feeds: [String: [MediaItem]] = [:]
-    @Published private(set) var loading: Set<String> = []
-    @Published private(set) var errors: [String: String] = [:]
+    // Many sites refresh at once; screens are told about changes at most a few times a second
+    // instead of after every single update, which kept them busy and made scrolling stutter.
+    private(set) var feeds: [String: [MediaItem]] = [:] { didSet { version &+= 1; changed() } }
+    private(set) var loading: Set<String> = [] { didSet { changed() } }
+    private(set) var errors: [String: String] = [:] { didSet { changed() } }
+    private var version = 0
+    private var changePending = false
+    private var homeCache: [UUID: (version: Int, items: [MediaItem])] = [:]
+    private var mixedCache: (version: Int, sites: [UUID], items: [MediaItem])?
+
+    private func changed() {
+        guard !changePending else { return }
+        changePending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            self.changePending = false
+            self.objectWillChange.send()
+        }
+    }
     @Published private(set) var isRefreshingAll = false
     @Published private(set) var lastRefresh: Date?
 
     private var nextPages: [String: URL] = [:]
     private var resolvedCache: [String: ResolvedMedia] = [:]
+    private var resolvedAt: [String: Date] = [:]
     /// Per feed: whether its thumbnail tiles turned out to be categories (checked once per launch).
     private var listingProbe: [String: Bool] = [:]
     private var saveWork: DispatchWorkItem?
+
+    private struct ResolvedEntry: Codable { var media: ResolvedMedia; var at: Date }
 
     private struct Snapshot: Codable {
         var feeds: [String: [MediaItem]]
@@ -30,6 +49,14 @@ final class FeedEngine: ObservableObject {
             feeds = snap.feeds
             nextPages = snap.nextPages
             lastRefresh = snap.lastRefresh
+        }
+        // Known files from earlier sessions; video links often expire, so only recent ones.
+        if let saved = Disk.load([String: ResolvedEntry].self, "resolved.json") {
+            let fresh = Date().addingTimeInterval(-6 * 3600)
+            for (k, e) in saved where e.at > fresh {
+                resolvedCache[k] = e.media
+                resolvedAt[k] = e.at
+            }
         }
     }
 
@@ -45,6 +72,13 @@ final class FeedEngine: ObservableObject {
     /// What a site contributes to Home and its Latest section: real media, never category covers.
     /// When the site's own page only lists categories, its newest items come from those categories.
     func homeItems(_ site: Site) -> [MediaItem] {
+        if let c = homeCache[site.id], c.version == version { return c.items }
+        let items = computeHomeItems(site)
+        homeCache[site.id] = (version, items)
+        return items
+    }
+
+    private func computeHomeItems(_ site: Site) -> [MediaItem] {
         let covers = Set(site.categories.compactMap { $0.thumbnailURL?.absoluteString })
         let root = (feeds[Self.key(site)] ?? []).filter { i in
             i.isListing != true && !(i.thumbnailURL.map { covers.contains($0.absoluteString) } ?? false)
@@ -75,6 +109,8 @@ final class FeedEngine: ObservableObject {
     }
 
     func mixedFeed(_ sites: [Site]) -> [MediaItem] {
+        let ids = sites.map(\.id)
+        if let c = mixedCache, c.version == version, c.sites == ids { return c.items }
         let lists = sites.map { homeItems($0) }
         var out: [MediaItem] = []
         var seen = Set<String>()
@@ -84,6 +120,7 @@ final class FeedEngine: ObservableObject {
                 if l[i].isListing != true, seen.insert(l[i].id).inserted { out.append(l[i]) }
             }
         }
+        mixedCache = (version, ids, out)
         return out
     }
 
@@ -190,6 +227,20 @@ final class FeedEngine: ObservableObject {
         }
     }
 
+    /// Next pages for the Home feed: each site's own page, or the categories its Home items come from.
+    func loadMoreHome(_ sites: [Site]) async {
+        var jobs: [(Site, SiteCategory?)] = []
+        for site in sites.prefix(12) {
+            if nextPages[Self.key(site)] != nil { jobs.append((site, nil)) }
+            if !site.categories.isEmpty, Self.needsCategoryFeeds(feeds[Self.key(site)] ?? []) {
+                for c in site.categories.prefix(3) where nextPages[Self.key(site, c)] != nil { jobs.append((site, c)) }
+            }
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for (site, c) in jobs { group.addTask { await self.loadMore(site, c) } }
+        }
+    }
+
     func loadMore(_ site: Site, _ category: SiteCategory?) async {
         let key = Self.key(site, category)
         guard let next = nextPages[key], !loading.contains(key) else { return }
@@ -232,6 +283,7 @@ final class FeedEngine: ObservableObject {
         feeds = [:]
         nextPages = [:]
         resolvedCache = [:]
+        resolvedAt = [:]
         listingProbe = [:]
         lastRefresh = nil
         scheduleSave()
@@ -340,56 +392,114 @@ final class FeedEngine: ObservableObject {
 
     func cachedResolution(_ item: MediaItem) -> ResolvedMedia? { resolvedCache[item.id] }
 
-    func resolve(_ item: MediaItem) async -> ResolvedMedia? {
-        if let r = resolvedCache[item.id] { return r }
-        let maxQ = AppSettings.shared.maxQuality
-        var result: ResolvedMedia?
+    private var inflight: [String: Task<ResolvedMedia?, Never>] = [:]
+    private var prefetchQueue: [MediaItem] = []
+    private var prefetching = 0
 
-        if let g = item.gallery, g.count > 1 {
-            result = ResolvedMedia(url: g[0], kind: .image, gallery: g, referer: nil)
-        } else if let page = item.pageURL, Scraper.isReddit(page), item.mediaURL == nil,
-                  let data = try? await Net.redditJSON(Scraper.redditJSONURL(for: page) ?? page),
-                  let post = Scraper.parseReddit(data: data, listingURL: page, site: SiteStore.shared.site(item.siteID) ?? Site(name: item.siteName, url: page), categoryName: nil).items.first,
-                  post.mediaURL != nil || post.gallery != nil {
-            if let g = post.gallery, g.count > 1 {
-                result = ResolvedMedia(url: g[0], kind: .image, gallery: g, referer: nil)
-            } else if let m = post.mediaURL {
-                result = ResolvedMedia(url: m, kind: post.kind, referer: nil)
+    /// Finds the playable file behind an item. `.user` is for what is on screen now; it may open
+    /// the page in a hidden web view. Results are kept (also on disk) so the next tap is instant.
+    func resolve(_ item: MediaItem, priority: PageRenderer.Priority = .user) async -> ResolvedMedia? {
+        if let r = resolvedCache[item.id] { return r }
+        // Share work with a prefetch of the same item that is already running.
+        if let t = inflight[item.id] {
+            if let r = await t.value { return r }
+            if let r = resolvedCache[item.id] { return r }
+        }
+        let task = Task { await self.resolveUncached(item, allowRender: true, priority: priority) }
+        inflight[item.id] = task
+        let r = await task.value
+        inflight[item.id] = nil
+        if let r { remember(item, r) }
+        // Nothing playable: show the thumbnail, but keep trying next time.
+        if r == nil, let thumb = item.thumbnailURL {
+            return ResolvedMedia(url: thumb, kind: item.kind == .gif ? .gif : .image, referer: item.pageURL)
+        }
+        return r
+    }
+
+    /// Resolves items as they scroll into view, without opening hidden web views, so most taps
+    /// find their file already known. The newest requests go first.
+    func prefetch(_ item: MediaItem) {
+        guard item.isListing != true, item.mediaURL == nil, item.pageURL != nil,
+              resolvedCache[item.id] == nil, inflight[item.id] == nil else { return }
+        prefetchQueue.removeAll { $0.id == item.id }
+        prefetchQueue.append(item)
+        if prefetchQueue.count > 40 { prefetchQueue.removeFirst(prefetchQueue.count - 40) }
+        pumpPrefetch()
+    }
+
+    private func pumpPrefetch() {
+        while prefetching < 3, let item = prefetchQueue.popLast() {
+            guard resolvedCache[item.id] == nil, inflight[item.id] == nil else { continue }
+            prefetching += 1
+            let task = Task { await self.resolveUncached(item, allowRender: false, priority: .background) }
+            inflight[item.id] = task
+            Task {
+                let r = await task.value
+                self.inflight[item.id] = nil
+                if let r { self.remember(item, r) }
+                self.prefetching -= 1
+                self.pumpPrefetch()
             }
-        } else if let m = item.mediaURL {
+        }
+    }
+
+    private func remember(_ item: MediaItem, _ r: ResolvedMedia) {
+        resolvedCache[item.id] = r
+        resolvedAt[item.id] = Date()
+        if r.isListing { markListing(item) } else if r.kind != item.kind { updateKind(item, to: r.kind) }
+        scheduleSave()
+    }
+
+    /// Returns nil when nothing playable was found (or, without rendering, when the page needs it).
+    private func resolveUncached(_ item: MediaItem, allowRender: Bool, priority: PageRenderer.Priority) async -> ResolvedMedia? {
+        let maxQ = AppSettings.shared.maxQuality
+        if let g = item.gallery, g.count > 1 {
+            return ResolvedMedia(url: g[0], kind: .image, gallery: g, referer: nil)
+        }
+        if let m = item.mediaURL {
             var url = m
             var kind = MediaKind.guess(from: m) ?? item.kind
             if m.pathExtension.lowercased() == "gifv", let mp4 = URL(string: m.absoluteString.replacingOccurrences(of: ".gifv", with: ".mp4")) {
                 url = mp4; kind = .video
             }
-            result = ResolvedMedia(url: url, kind: kind, referer: item.pageURL ?? item.mediaURL)
-        } else if let page = item.pageURL {
-            let site = SiteStore.shared.site(item.siteID)
-            if site?.renderMode != .full, let (data, resp) = try? await Net.fetch(page) {
+            return ResolvedMedia(url: url, kind: kind, referer: item.pageURL ?? item.mediaURL)
+        }
+        guard let page = item.pageURL else { return nil }
+        if Scraper.isReddit(page) {
+            let site = SiteStore.shared.site(item.siteID) ?? Site(name: item.siteName, url: page)
+            guard let data = try? await Net.redditJSON(Scraper.redditJSONURL(for: page) ?? page) else { return nil }
+            let post = await Task.detached { Scraper.parseReddit(data: data, listingURL: page, site: site, categoryName: nil).items.first }.value
+            if let g = post?.gallery, g.count > 1 { return ResolvedMedia(url: g[0], kind: .image, gallery: g, referer: nil) }
+            if let m = post?.mediaURL { return ResolvedMedia(url: m, kind: post?.kind ?? .image, referer: nil) }
+            return nil
+        }
+
+        let site = SiteStore.shared.site(item.siteID)
+        let expectsVideo = item.kind == .video || item.duration != nil
+        var result: ResolvedMedia?
+        if site?.renderMode != .full, let (data, resp) = try? await Net.fetch(page) {
+            let finalURL = resp?.url ?? page
+            let checkListing = item.kind != .video && item.duration == nil
+            // Parsing big pages takes time; keep it off the main thread so scrolling stays smooth.
+            let (isListing, detail) = await Task.detached { () -> (Bool, ResolvedMedia?) in
                 let html = Net.text(data, response: resp)
-                if item.kind != .video, item.duration == nil, let site,
-                   Self.isListingHTML(html, url: resp?.url ?? page, site: site) {
-                    let r = ResolvedMedia(url: page, kind: .image, referer: page, isListing: true)
-                    resolvedCache[item.id] = r
-                    markListing(item)
-                    return r
-                }
-                result = Scraper.resolveDetail(html: html, pageURL: resp?.url ?? page, maxHeight: maxQ)
-            }
-            let wantsVideo = item.kind == .video && result?.kind != .video
-            if result == nil || wantsVideo || site?.renderMode == .full {
-                if let html = await PageRenderer.shared.render(page, settle: 1.2),
-                   let r2 = Scraper.resolveDetail(html: html, pageURL: page, maxHeight: maxQ) {
-                    if result == nil || r2.kind == .video { result = r2 }
-                }
-            }
+                if checkListing, let site, Self.isListingHTML(html, url: finalURL, site: site) { return (true, nil) }
+                return (false, Scraper.resolveDetail(html: html, pageURL: finalURL, maxHeight: maxQ))
+            }.value
+            if isListing { return ResolvedMedia(url: page, kind: .image, referer: page, isListing: true) }
+            result = detail
         }
-        if result == nil, let thumb = item.thumbnailURL {
-            result = ResolvedMedia(url: thumb, kind: item.kind == .gif ? .gif : .image, referer: item.pageURL)
+        let needsRender = result == nil || (expectsVideo && result?.kind != .video) || site?.renderMode == .full
+        guard needsRender else { return result }
+        guard allowRender else { return nil }
+        let (video, html) = await PageRenderer.shared.renderMedia(page)
+        if let v = video {
+            return ResolvedMedia(url: v.url, kind: .video, gallery: v.poster.map { [$0] } ?? [], referer: page)
         }
-        if let r = result {
-            resolvedCache[item.id] = r
-            if r.kind != item.kind { updateKind(item, to: r.kind) }
+        if let html {
+            let r2 = await Task.detached { Scraper.resolveDetail(html: html, pageURL: page, maxHeight: maxQ) }.value
+            if let r2, result == nil || r2.kind == .video { result = r2 }
         }
         return result
     }
@@ -484,5 +594,10 @@ final class FeedEngine: ObservableObject {
 
     func saveNow() {
         Disk.save(Snapshot(feeds: feeds, nextPages: nextPages, lastRefresh: lastRefresh), "feeds.json")
+        var entries: [String: ResolvedEntry] = [:]
+        for (k, at) in resolvedAt.sorted(by: { $0.value > $1.value }).prefix(3000) {
+            if let m = resolvedCache[k] { entries[k] = ResolvedEntry(media: m, at: at) }
+        }
+        Disk.save(entries, "resolved.json")
     }
 }

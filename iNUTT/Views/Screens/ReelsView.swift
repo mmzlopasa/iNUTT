@@ -46,20 +46,36 @@ final class ReelsStore: ObservableObject {
         let source = AppSettings.shared.reelsSource
         loading = true
         defer { loading = false }
+        // TikTok-style pages load their videos while you swipe: play through the page off screen and
+        // show each video the moment it loads, while the page's links are read at the same time.
         captureRounds = 0
+        streamSource = source
+        streamed = []
+        streamFresh = true
+        let captureTask = Task { await self.capture(site, rounds: 10) }
         let r = try? await FeedEngine.fetchListing(url: site.url, base: site.url, site: site, categoryName: nil, allowRender: true)
-        var list: [MediaItem] = []
         let strong = (r?.items ?? []).filter { $0.isListing != true && ($0.kind == .video || $0.kind == .gif || $0.duration != nil) }
-        // TikTok-style pages load their videos while you swipe: play through the page and keep what it loads.
-        if strong.count < 6 {
-            let captured = await capture(site, rounds: 10)
-            if captured.count >= 2 {
+
+        var list: [MediaItem] = []
+        var nextPage: URL?
+        if strong.count >= 6 && streamed.count < 2 {
+            // A normal listing of videos: use it and stop the capture.
+            captureTask.cancel()
+            streamSource = nil
+            let have = Set(streamed.map(\.id))
+            list = streamed + Self.reels(r?.items ?? []).filter { !have.contains($0.id) }
+            nextPage = r?.nextPage
+        } else {
+            let captured = await captureTask.value
+            streamSource = nil
+            if !captured.isEmpty {
                 list = captured
                 captureRounds = 10
             }
         }
         if list.isEmpty, let r {
             list = Self.reels(r.items)
+            nextPage = r.nextPage
             // A page of categories: play the first ones.
             if list.count < 4 {
                 for c in r.categories.prefix(3) {
@@ -79,8 +95,14 @@ final class ReelsStore: ObservableObject {
             Task { await self.loadIfNeeded() }
             return
         }
-        items = list
-        next = captureRounds > 0 ? nil : r?.nextPage
+        // Videos that streamed in are on screen already: keep them first so the reel being watched stays.
+        if streamed.isEmpty {
+            items = list
+        } else {
+            let have = Set(items.map(\.id))
+            items += list.filter { !have.contains($0.id) }
+        }
+        next = captureRounds > 0 ? nil : nextPage
         loadedSource = AppSettings.shared.reelsSource
         error = nil
         save()
@@ -90,15 +112,15 @@ final class ReelsStore: ObservableObject {
         guard let site, !loading else { return }
         let source = AppSettings.shared.reelsSource
         if captureRounds > 0 {
-            // Swipe further through the page for the next videos.
+            // Swipe further through the page for the next videos, adding each as it loads.
             guard captureRounds < 60 else { return }
             loading = true
             defer { loading = false }
             captureRounds += 10
-            let more = await capture(site, rounds: captureRounds)
-            guard source == AppSettings.shared.reelsSource else { return }
-            let have = Set(items.map(\.id))
-            items += more.filter { !have.contains($0.id) }
+            streamSource = source
+            streamFresh = false
+            _ = await capture(site, rounds: captureRounds)
+            streamSource = nil
             save()
             return
         }
@@ -118,15 +140,31 @@ final class ReelsStore: ObservableObject {
     }
 
     private var captureRounds = 0
+    /// While set, captured videos of this source go on screen as soon as they load.
+    private var streamSource: String?
+    private var streamed: [MediaItem] = []
+    private var streamFresh = false
 
     private func capture(_ site: Site, rounds: Int) async -> [MediaItem] {
-        await PageRenderer.shared.captureVideos(site.url, rounds: rounds).map { v in
+        func item(_ v: PageRenderer.CapturedVideo) -> MediaItem {
             var item = MediaItem(siteID: site.id, siteName: site.name, title: v.title, thumbnailURL: v.poster,
                                  mediaURL: v.url, pageURL: site.url, kind: .video)
             // Every video comes from the same page; tell them apart by their file.
             item.id = MediaItem.hash(v.url.absoluteString)
             return item
         }
+        return await PageRenderer.shared.captureVideos(site.url, rounds: rounds) { [weak self] batch in
+            Task { @MainActor in
+                guard let self, let s = self.streamSource, s == AppSettings.shared.reelsSource else { return }
+                let fresh = batch.map(item)
+                self.streamed += fresh
+                // The first video of a fresh load replaces what was shown before.
+                if self.streamFresh { self.items = []; self.streamFresh = false }
+                let have = Set(self.items.map(\.id))
+                self.items += fresh.filter { !have.contains($0.id) }
+                self.loadedSource = s
+            }
+        }.map(item)
     }
 
     /// Videos, GIFs, and post links that may hold one, from any site. Post links are treated as
@@ -174,7 +212,10 @@ struct ReelsView: View {
                 sourceSetup
             } else if store.items.isEmpty {
                 if store.loading {
-                    ProgressView().tint(Theme.gold).scaleEffect(1.2)
+                    VStack(spacing: 14) {
+                        ProgressView().tint(Theme.gold).scaleEffect(1.2)
+                        Text("Loading reels…").font(Theme.text(14, .medium)).foregroundStyle(Theme.muted)
+                    }
                 } else {
                     VStack(spacing: 16) {
                         EmptyStateView(symbol: "play.rectangle.on.rectangle", title: "No reels",
@@ -351,17 +392,23 @@ struct ReelPage: View {
     @State private var failed = false
     @State private var loopObserver: NSObjectProtocol?
     @State private var onScreen = false
+    @State private var ready = false
 
     private var isActive: Bool { cursor.visible && cursor.index == index }
 
     var body: some View {
         ZStack {
             Color.black
-            if let t = item.thumbnailURL, player == nil && image == nil {
-                RemoteImage(url: t, referer: item.referer, maxPixel: 800, contentMode: .fill, showsPlaceholder: false)
-            }
             if let player {
                 PlayerLayerView(player: player).ignoresSafeArea()
+            }
+            // The poster stays on top until the first frame is ready, so a reel is never a black screen.
+            if let t = item.thumbnailURL, !ready && image == nil && !failed {
+                RemoteImage(url: t, referer: item.referer, maxPixel: 800, contentMode: .fill, showsPlaceholder: false)
+                    .ignoresSafeArea()
+            }
+            if player != nil && !failed {
+                if !ready { ProgressView().tint(Theme.gold) }
             } else if let image {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
             } else if failed {
@@ -467,10 +514,33 @@ struct ReelPage: View {
             if onScreen { attachLoop(p) }
             if isActive { library.record(item) }
             apply()
+            await watch(p)
         case .gif, .image:
             image = await ImagePipeline.shared.image(r.url, referer: r.referer, maxPixel: 1600, animated: r.kind == .gif)
             failed = image == nil
         }
+    }
+}
+
+extension ReelPage {
+    /// Waits for the video's first frame, or shows the error instead of a black screen.
+    private func watch(_ p: AVPlayer) async {
+        for _ in 0..<80 {
+            guard !Task.isCancelled, let pi = p.currentItem else { return }
+            switch pi.status {
+            case .readyToPlay:
+                ready = true
+                return
+            case .failed:
+                failed = true
+                player = nil
+                return
+            default:
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+        // Nothing after 16 seconds: this reel cannot play.
+        if !ready { failed = true; player = nil }
     }
 }
 

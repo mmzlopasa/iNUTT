@@ -38,7 +38,7 @@ final class Preloader {
         let targets = [index + 1, index + 2, index - 1].filter { items.indices.contains($0) }.map { items[$0] }
         for item in targets {
             Task {
-                guard let media = await FeedEngine.shared.resolve(item) else { return }
+                guard let media = await FeedEngine.shared.resolve(item, priority: .background) else { return }
                 switch media.kind {
                 case .video:
                     let p = self.player(for: item, media: media)

@@ -20,12 +20,15 @@ enum Disk {
         return try? dec.decode(T.self, from: data)
     }
 
+    /// Encodes and writes in the background, in order, so saving never stalls scrolling.
     static func save<T: Encodable>(_ value: T, _ name: String) {
-        let enc = JSONEncoder()
-        enc.dateEncodingStrategy = .secondsSince1970
-        guard let data = try? enc.encode(value) else { return }
         let url = dir.appendingPathComponent(name)
-        queue.async { try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
+        queue.async {
+            let enc = JSONEncoder()
+            enc.dateEncodingStrategy = .secondsSince1970
+            guard let data = try? enc.encode(value) else { return }
+            try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
     }
 }
 
@@ -89,18 +92,27 @@ final class SiteStore: ObservableObject {
 
 // MARK: - Favorites & history
 
+/// Only the set of favorite ids, so grid cards redraw on a favorite change and not on every history record.
+@MainActor
+final class FavoriteMarks: ObservableObject {
+    static let shared = FavoriteMarks()
+    @Published fileprivate(set) var ids = Set<String>()
+    func contains(_ item: MediaItem) -> Bool { ids.contains(item.id) }
+}
+
 @MainActor
 final class Library: ObservableObject {
     static let shared = Library()
 
     @Published private(set) var favorites: [MediaItem] = []
     @Published private(set) var history: [HistoryEntry] = []
-    private var favoriteIDs = Set<String>()
+    private var favoriteIDs = Set<String>() { didSet { FavoriteMarks.shared.ids = favoriteIDs } }
 
     private init() {
         favorites = Disk.load([MediaItem].self, "favorites.json") ?? []
         history = Disk.load([HistoryEntry].self, "history.json") ?? []
         favoriteIDs = Set(favorites.map(\.id))
+        FavoriteMarks.shared.ids = favoriteIDs
     }
 
     func isFavorite(_ item: MediaItem) -> Bool { favoriteIDs.contains(item.id) }

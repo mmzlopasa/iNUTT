@@ -7,8 +7,8 @@ enum MediaKind: String, Codable, CaseIterable, Hashable {
     var label: String {
         switch self {
         case .image: return "Images"
-        case .gif: return "GIF"
-        case .video: return "Video"
+        case .gif: return "GIFs"
+        case .video: return "Videos"
         }
     }
 
@@ -126,7 +126,7 @@ struct HistoryEntry: Codable, Identifiable, Hashable {
 }
 
 /// Result of opening an item: the real, playable media.
-struct ResolvedMedia: Hashable {
+struct ResolvedMedia: Hashable, Codable {
     var url: URL
     var kind: MediaKind
     /// Extra images when the page is a gallery.

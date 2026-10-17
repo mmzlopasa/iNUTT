@@ -134,6 +134,7 @@ struct FloatingTabBar: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .modifier(HomeKindMenu(enabled: t == .home, selection: $selection))
             }
         }
         .padding(6)
@@ -146,5 +147,31 @@ struct FloatingTabBar: View {
         .shadow(color: .black.opacity(0.55), radius: 24, y: 12)
         .padding(.horizontal, 14)
         .frame(maxWidth: 560)
+    }
+}
+
+/// Long-press on the Home tab: jump straight to Images, Videos or GIFs.
+private struct HomeKindMenu: ViewModifier {
+    let enabled: Bool
+    @Binding var selection: AppTab
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.contextMenu {
+                Button { show(nil) } label: { Label("All", systemImage: "square.grid.2x2") }
+                ForEach(MediaKind.allCases, id: \.self) { k in
+                    Button { show(k) } label: { Label(k.label, systemImage: k.symbol) }
+                }
+            }
+        } else {
+            content
+        }
+    }
+
+    private func show(_ kind: MediaKind?) {
+        let router = Router.shared
+        router.homeFilter = kind
+        router.home = NavigationPath()
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { selection = .home }
     }
 }

@@ -94,7 +94,7 @@ struct MediaCard: View {
     let item: MediaItem
     var aspect: CGFloat = 4 / 5
     var showTitle = true
-    @EnvironmentObject private var library: Library
+    @ObservedObject private var marks = FavoriteMarks.shared
 
     var body: some View {
         Color.clear
@@ -116,7 +116,7 @@ struct MediaCard: View {
             }
             .overlay(alignment: .topTrailing) { KindBadge(item: item).padding(8) }
             .overlay(alignment: .topLeading) {
-                if library.isFavorite(item) {
+                if marks.contains(item) {
                     Image(systemName: "heart.fill")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Theme.gold)
@@ -128,6 +128,7 @@ struct MediaCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.edge, lineWidth: 0.6))
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .onAppear { FeedEngine.shared.prefetch(item) }
     }
 }
 
@@ -159,10 +160,19 @@ struct MediaGrid: View {
     let items: [MediaItem]
     var onReachEnd: (() -> Void)?
     @EnvironmentObject private var viewer: ViewerState
+    /// Fixed per list, so cards do not jump when an item turns out to be a video while scrolling.
+    @State private var shape: (key: String, aspect: CGFloat)?
 
-    private var aspect: CGFloat {
+    private var key: String { (items.first?.id ?? "") + "|" + String(items.count > 0) }
+
+    private var computedAspect: CGFloat {
         let videos = items.prefix(30).filter { $0.kind == .video }.count
         return videos * 2 > min(items.count, 30) ? 16 / 11 : 4 / 5
+    }
+
+    private var aspect: CGFloat {
+        if let shape, shape.key == key { return shape.aspect }
+        return computedAspect
     }
 
     var body: some View {
@@ -186,6 +196,8 @@ struct MediaGrid: View {
                 }
             }
         }
+        .onAppear { if shape?.key != key { shape = (key, computedAspect) } }
+        .onChange(of: key) { k in shape = (k, computedAspect) }
     }
 }
 
