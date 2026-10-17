@@ -461,6 +461,12 @@ class FeedEngine extends ChangeNotifier {
 
   ResolvedMedia? cachedResolution(MediaItem item) => _resolved[item.id];
 
+  /// Drops a remembered video link, e.g. one that stopped playing, so the next resolve looks again.
+  Future<void> forgetResolved(MediaItem item) async {
+    _resolved.remove(item.id);
+    _resolvedAt.remove(item.id);
+  }
+
   /// The playable file behind an item. Answers instantly from the cache, joins a load that is already
   /// running, and otherwise loads it now ahead of any background work.
   Future<ResolvedMedia?> resolve(MediaItem item, {RenderPriority priority = RenderPriority.user}) async {

@@ -175,14 +175,24 @@ class PageRenderer {
   PageRenderer._();
 
   final _active = {RenderPriority.user: 0, RenderPriority.background: 0};
-  static const _limits = {RenderPriority.user: 3, RenderPriority.background: 2};
+  // On Windows the hidden browser works on the same thread that draws the app, so fewer run at once.
+  static final _limits = {
+    RenderPriority.user: Platform.isWindows ? 2 : 3,
+    RenderPriority.background: Platform.isWindows ? 1 : 2,
+  };
 
   /// Background pages wait while the user is waiting for something.
   int _userWaiting = 0;
+  DateTime _lastInput = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Windows: a click or scroll just happened; background pages hold off until the app is idle again.
+  void noteInput() => _lastInput = DateTime.now();
+
+  bool get _busy => Platform.isWindows && DateTime.now().difference(_lastInput) < const Duration(milliseconds: 1500);
 
   Future<void> _acquire(RenderPriority p) async {
     if (p == RenderPriority.user) _userWaiting++;
-    while (_active[p]! >= _limits[p]! || (p == RenderPriority.background && _userWaiting > 0)) {
+    while (_active[p]! >= _limits[p]! || (p == RenderPriority.background && (_userWaiting > 0 || _busy))) {
       await Future<void>.delayed(const Duration(milliseconds: 120));
     }
     if (p == RenderPriority.user) _userWaiting--;

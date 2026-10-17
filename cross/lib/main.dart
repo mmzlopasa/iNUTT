@@ -15,6 +15,7 @@ import 'core/extras.dart';
 import 'core/feed_engine.dart';
 import 'core/image_cache.dart';
 import 'core/models.dart';
+import 'core/net.dart';
 import 'core/security.dart';
 import 'core/stores.dart';
 import 'core/sync.dart';
@@ -153,7 +154,11 @@ class INuttApp extends StatelessWidget {
     navigatorKey: AppRouter.shared.rootKey,
     scrollBehavior: const _Scroll(),
     // Lock, privacy cover, onboarding and toasts sit above every route, the viewer included.
-    builder: (context, child) => AppShell(child: child ?? const SizedBox.shrink()),
+    // The transparent Material gives every screen the app's text style, also screens without a Scaffold.
+    builder: (context, child) => Material(
+      type: MaterialType.transparency,
+      child: AppShell(child: child ?? const SizedBox.shrink()),
+    ),
     home: windowItems == null ? const RootView() : WindowViewer(items: windowItems!),
   );
 }
@@ -312,7 +317,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final locked = LockManager.shared.isLocked;
       return Stack(
         children: [
-          Positioned.fill(child: widget.child),
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (_) => PageRenderer.shared.noteInput(),
+              onPointerSignal: (_) => PageRenderer.shared.noteInput(),
+              child: widget.child,
+            ),
+          ),
           Positioned(
             top: MediaQuery.paddingOf(context).top + 8,
             left: 16,

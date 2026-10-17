@@ -350,15 +350,20 @@ class _ReelsViewState extends State<ReelsView> {
                   if (j < store.items.length) unawaited(FeedEngine.shared.resolve(store.items[j]));
                 }
               },
-              itemBuilder: (context, i) => ReelPage(
-                key: ValueKey(store.items[i].id),
-                item: store.items[i],
-                active: _active && i == _index,
-                onEnded: () {
-                  if (!_page.hasClients || i != _index || i + 1 >= store.items.length) return;
-                  _page.nextPage(duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
-                },
-              ),
+              itemBuilder: (context, i) {
+                final reel = ReelPage(
+                  key: ValueKey(store.items[i].id),
+                  item: store.items[i],
+                  active: _active && i == _index,
+                  onEnded: () {
+                    if (!_page.hasClients || i != _index || i + 1 >= store.items.length) return;
+                    _page.nextPage(duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
+                  },
+                );
+                // On a wide window a reel is a tall column in the middle, so the video isn't cropped.
+                final size = MediaQuery.sizeOf(context);
+                return size.width > size.height * 0.8 ? Center(child: AspectRatio(aspectRatio: 9 / 16, child: reel)) : reel;
+              },
             ),
             _topBar(context),
           ],
@@ -511,6 +516,11 @@ class _ReelPageState extends State<ReelPage> {
   Player? _player;
   VideoController? _video;
   bool _failed = false;
+
+  /// Why the reel didn't play, shown under the message so a screenshot says what went wrong.
+  String? _why;
+  bool _retried = false;
+  int _attempt = 0;
   bool _paused = false;
   bool _muted = AppSettings.shared.startMuted;
   bool _ready = false;
@@ -548,29 +558,49 @@ class _ReelPageState extends State<ReelPage> {
   }
 
   /// Keeps the poster up until the first frame, and shows the error instead of a black screen.
-  void _watch(Player p) {
+  void _watch(Player p, int attempt) {
     _subs.add(
       p.stream.width.listen((w) {
-        if (w != null && w > 0 && !_ready && mounted) {
+        if (w != null && w > 0 && !_ready && mounted && attempt == _attempt) {
           _giveUp?.cancel();
           setState(() => _ready = true);
         }
       }),
     );
     _subs.add(
-      p.stream.error.listen((_) {
-        if (!_ready && mounted) setState(() => _failed = true);
+      p.stream.error.listen((e) {
+        if (!_ready && attempt == _attempt) _fail('Player: $e');
       }),
     );
     _giveUp = Timer(const Duration(seconds: 16), () {
-      if (!_ready && mounted) setState(() => _failed = true);
+      if (!_ready && attempt == _attempt) _fail('The video didn\'t start within 16 s.');
+    });
+  }
+
+  /// A saved video link can expire, so the first failure looks the video up again by itself.
+  void _fail(String why) {
+    if (!mounted || _failed) return;
+    if (!_retried) {
+      _retried = true;
+      unawaited(_retry());
+      return;
+    }
+    setState(() {
+      _failed = true;
+      _why = why;
     });
   }
 
   Future<void> _load() async {
+    final attempt = _attempt;
     final r = await FeedEngine.shared.resolve(widget.item);
-    if (!mounted) return;
-    if (r == null || r.isListing) return setState(() => _failed = true);
+    if (!mounted || attempt != _attempt) return;
+    if (r == null || r.isListing) {
+      return setState(() {
+        _failed = true;
+        _why = r == null ? 'No video was found on its page.' : 'Its page lists more videos instead of one.';
+      });
+    }
     setState(() => _resolved = r);
     if (r.kind != MediaKind.video) {
       if (widget.active) Library.shared.record(widget.item);
@@ -579,7 +609,11 @@ class _ReelPageState extends State<ReelPage> {
     final p = Player(configuration: const PlayerConfiguration(bufferSize: 16 * 1024 * 1024));
     final v = VideoController(p);
     await bufferAhead(p);
-    _watch(p);
+    if (!mounted || attempt != _attempt) {
+      await p.dispose();
+      return;
+    }
+    _watch(p, attempt);
     final autoNext = AppSettings.shared.reelsAutoNext;
     if (autoNext) {
       _subs.add(
@@ -596,7 +630,7 @@ class _ReelPageState extends State<ReelPage> {
     await p.setPlaylistMode(autoNext ? PlaylistMode.none : PlaylistMode.single);
     if (_muted) await p.setVolume(0);
     await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer, r.url)), play: widget.active && !_paused);
-    if (!mounted) {
+    if (!mounted || attempt != _attempt) {
       await p.dispose();
       return;
     }
@@ -611,6 +645,28 @@ class _ReelPageState extends State<ReelPage> {
       _player = p;
       _video = v;
     });
+  }
+
+  /// Starts this reel over from finding its video.
+  Future<void> _retry() async {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
+    _giveUp?.cancel();
+    _attempt++;
+    final old = _player;
+    setState(() {
+      _player = null;
+      _video = null;
+      _resolved = null;
+      _failed = false;
+      _ready = false;
+      _why = null;
+    });
+    await old?.dispose();
+    await FeedEngine.shared.forgetResolved(widget.item);
+    await _load();
   }
 
   void _togglePause() {
@@ -654,10 +710,24 @@ class _ReelPageState extends State<ReelPage> {
             RemoteImage(url: item.thumbnailUrl, referer: item.referer, fit: BoxFit.cover, placeholder: false, decodeWidth: 600),
           Center(
             child: _failed
-                ? Text(
-                    'Couldn\'t play this one. Swipe up for the next.',
-                    style: T.text(14, color: T.body),
-                    textAlign: TextAlign.center,
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Couldn\'t play this one. Swipe up for the next.',
+                          style: T.text(14, color: T.body),
+                          textAlign: TextAlign.center,
+                        ),
+                        if (_why != null) ...[
+                          const SizedBox(height: 6),
+                          Text(_why!, style: T.mono(11, color: T.muted), textAlign: TextAlign.center, maxLines: 3),
+                        ],
+                        const SizedBox(height: 14),
+                        GhostButton(label: 'Try again', onPressed: _retry),
+                      ],
+                    ),
                   )
                 : const CircularProgressIndicator(strokeWidth: 2.5, color: T.gold),
           ),

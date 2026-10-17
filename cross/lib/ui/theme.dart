@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'dart:ui';
 
@@ -438,7 +439,22 @@ class Frosted extends StatelessWidget {
   const Frosted({super.key, required this.child, this.radius = 26});
 
   @override
-  Widget build(BuildContext context) => ClipRRect(
+  Widget build(BuildContext context) {
+    // Windows redraws the blur behind it on every scrolled frame, which made the app lag there.
+    if (Platform.isWindows) {
+      return Container(
+        decoration: BoxDecoration(
+          color: const Color(0xE6151820),
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: T.edge),
+        ),
+        child: child,
+      );
+    }
+    return _blurred();
+  }
+
+  Widget _blurred() => ClipRRect(
     borderRadius: BorderRadius.circular(radius),
     child: BackdropFilter(
       filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),

@@ -516,9 +516,8 @@ class _MediaViewerState extends State<MediaViewer> {
       child: Container(
         height: 36,
         padding: const EdgeInsets.symmetric(horizontal: 14),
-        alignment: Alignment.center,
         decoration: active ? BoxDecoration(gradient: T.goldGradient, borderRadius: BorderRadius.circular(18)) : null,
-        child: Text(label, style: T.mono(13, color: active ? T.onGold : Colors.white)),
+        child: Center(widthFactor: 1, child: Text(label, style: T.mono(13, color: active ? T.onGold : Colors.white))),
       ),
     ),
   );
