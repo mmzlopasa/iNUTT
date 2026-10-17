@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'extras.dart';
+import 'stores.dart';
 import 'site_adapters.dart';
 
 class NetException implements Exception {
@@ -136,6 +137,37 @@ class Net {
 
 enum RenderPriority { user, background }
 
+/// The one browser engine every web view and cookie call shares. On Windows it has to exist before
+/// the first of them: the plugin's built-in default is made lazily, and several sites loading at once
+/// on launch would use it before it is ready and crash the app. Null on Windows without WebView2.
+class WebEnv {
+  static Future<WebViewEnvironment?>? _env;
+
+  static Future<WebViewEnvironment?> get() => _env ??= _create();
+
+  static Future<WebViewEnvironment?> _create() async {
+    if (!Platform.isWindows) return null;
+    try {
+      if (await WebViewEnvironment.getAvailableVersion() == null) return null;
+      return await WebViewEnvironment.create(
+        settings: WebViewEnvironmentSettings(userDataFolder: '${Disk.dir.path}${Platform.pathSeparator}WebView2'),
+      );
+    } catch (e) {
+      debugPrint('WebView2 unavailable: $e');
+      return null;
+    }
+  }
+
+  /// Whether web views can be used at all here.
+  static Future<bool> available() async => !Platform.isWindows || await get() != null;
+
+  /// The cookie jar of that engine, or null when there is no engine.
+  static Future<CookieManager?> cookies() async {
+    if (!await available()) return null;
+    return CookieManager.instance(webViewEnvironment: await get());
+  }
+}
+
 /// Renders JavaScript-heavy pages off screen and returns the final DOM. Nothing of it is ever shown.
 /// What the user tapped runs in its own lane, so it never waits behind background refreshes.
 class PageRenderer {
@@ -163,14 +195,16 @@ class PageRenderer {
   Future<(HeadlessInAppWebView, Completer<bool>)> _open(Uri url, {required bool media}) async {
     final loaded = Completer<bool>();
     // Adult sites show their content only once the age gate has been passed.
+    if (!await WebEnv.available()) throw StateError('No web engine on this computer');
     try {
-      final jar = CookieManager.instance();
+      final jar = (await WebEnv.cookies())!;
       final domain = '.${url.host.split('.').reversed.take(2).toList().reversed.join('.')}';
       for (final e in SiteAdapters.ageCookies.entries) {
         await jar.setCookie(url: WebUri.uri(url), name: e.key, value: e.value, domain: domain, path: '/');
       }
     } catch (_) {}
     final web = HeadlessInAppWebView(
+      webViewEnvironment: await WebEnv.get(),
       initialUrlRequest: URLRequest(url: WebUri.uri(url)),
       initialSize: const Size(390, 844),
       initialSettings: InAppWebViewSettings(

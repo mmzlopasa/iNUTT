@@ -281,6 +281,8 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
   String? _note;
   Timer? _noteTimer;
   bool _ready = false;
+  bool _noEngine = false;
+  WebViewEnvironment? _env;
 
   @override
   void initState() {
@@ -290,8 +292,13 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
 
   /// Age-gate cookies first, so adult forums open on their content.
   Future<void> _prepare() async {
+    _env = await WebEnv.get();
+    if (!await WebEnv.available()) {
+      if (mounted) setState(() => _noEngine = true);
+      return;
+    }
     try {
-      final jar = CookieManager.instance();
+      final jar = (await WebEnv.cookies())!;
       final parts = widget.url.host.split('.');
       final domain = '.${parts.length >= 2 ? parts.sublist(parts.length - 2).join('.') : widget.url.host}';
       for (final e in SiteAdapters.ageCookies.entries) {
@@ -445,8 +452,21 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
           Expanded(
             child: Stack(
               children: [
+                if (_noEngine)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Text(
+                        'Web pages need Microsoft Edge WebView2, which isn\'t installed on this computer. '
+                        'Install the WebView2 Runtime from Microsoft, then open iNUTT again.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                  ),
                 if (_ready)
                   InAppWebView(
+                    webViewEnvironment: _env,
                     initialUrlRequest: URLRequest(url: WebUri.uri(widget.url)),
                     initialSettings: InAppWebViewSettings(
                       userAgent: Net.userAgent,

@@ -224,7 +224,9 @@ class CookieJar {
   static Future<void> capture(Uri? url) async {
     if (url == null || !url.scheme.startsWith('http')) return;
     try {
-      final list = await CookieManager.instance().getCookies(url: WebUri.uri(url));
+      final jar = await WebEnv.cookies();
+      if (jar == null) return;
+      final list = await jar.getCookies(url: WebUri.uri(url));
       if (list.isEmpty) return;
       final m = _byHost.putIfAbsent(_site(url.host), () => {});
       for (final c in list) {
