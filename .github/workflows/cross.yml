@@ -62,11 +62,21 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter build windows --release --build-number=${{ github.run_number }}
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build launcher
+        # The top folder holds only iNUTT.exe (this small launcher) and the "app" folder with everything else.
+        shell: cmd
+        working-directory: cross/windows/launcher
+        run: |
+          rc /nologo /fo launcher.res launcher.rc || exit /b 1
+          cl /nologo /O2 /EHsc /std:c++17 /DUNICODE /D_UNICODE launcher.cpp launcher.res /Fe:iNUTT.exe /link /SUBSYSTEM:WINDOWS user32.lib shell32.lib || exit /b 1
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path ..\out\iNUTT | Out-Null
-          Copy-Item -Recurse -Force build\windows\x64\runner\Release\* ..\out\iNUTT\
+          New-Item -ItemType Directory -Force -Path ..\out\iNUTT\app | Out-Null
+          Copy-Item -Recurse -Force build\windows\x64\runner\Release\* ..\out\iNUTT\app\
+          Copy-Item -Force windows\launcher\iNUTT.exe ..\out\iNUTT\iNUTT.exe
+          Get-ChildItem ..\out\iNUTT | Format-Table Name
           Compress-Archive -Path ..\out\iNUTT -DestinationPath ..\iNUTT-windows.zip -Force
       - uses: actions/upload-artifact@v4
         with:
@@ -88,4 +98,4 @@ jobs:
           gh release delete nightly-cross --yes --cleanup-tag || true
           gh release create nightly-cross inutt.apk iNUTT-windows.zip --prerelease \
             --target "$GITHUB_SHA" --title "iNUTT for Android & Windows (latest)" \
-            --notes "Android: install inutt.apk. Windows: unzip iNUTT-windows.zip and run iNUTT.exe."
+            --notes "Android: install inutt.apk. Windows: unzip iNUTT-windows.zip, then run iNUTT.exe in the unzipped folder (everything else is in its app folder)."

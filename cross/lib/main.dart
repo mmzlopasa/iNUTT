@@ -32,9 +32,41 @@ import 'ui/router.dart';
 import 'ui/theme.dart';
 
 Future<void> main(List<String> args) async {
+  // A failure while starting must never leave the app without a window: every step is guarded,
+  // anything that goes wrong is written to startup.log, and a broken start shows what failed.
+  runZonedGuarded(() => _start(args), (e, s) => _log('uncaught', e, s));
+}
+
+final List<String> _startupErrors = [];
+
+void _log(String step, Object e, [StackTrace? s]) {
+  final line = '${DateTime.now().toIso8601String()} $step: $e\n${s ?? ''}\n';
+  debugPrint(line);
+  try {
+    File('${Disk.dir.path}${Platform.pathSeparator}startup.log').writeAsStringSync(line, mode: FileMode.append);
+  } catch (_) {}
+}
+
+/// Runs one start-up step; a step that fails or hangs is logged and skipped instead of stopping the app.
+Future<void> _step(String name, FutureOr<void> Function() run) async {
+  try {
+    await Future.sync(run).timeout(const Duration(seconds: 8));
+  } catch (e, s) {
+    _startupErrors.add('$name: $e');
+    _log(name, e, s);
+  }
+}
+
+Future<void> _start(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
-  await Disk.init();
+  try {
+    MediaKit.ensureInitialized();
+    await Disk.init();
+  } catch (e, s) {
+    _log('core', e, s);
+    runApp(StartupErrorApp(message: '$e'));
+    return;
+  }
   // Windows "Open in new window": a second copy of the app that only shows the viewer.
   List<MediaItem>? windowItems;
   final w = args.indexOf('--window');
@@ -46,26 +78,26 @@ Future<void> main(List<String> args) async {
       Disk.readOnly = true;
     } catch (_) {}
   }
-  await AppSettings.shared.load();
-  await ImagePipeline.shared.init();
+  await _step('settings', AppSettings.shared.load);
+  await _step('images', ImagePipeline.shared.init);
   // Room for a few screens of decoded thumbnails, so scrolling back never decodes again.
   PaintingBinding.instance.imageCache
     ..maximumSize = 1500
     ..maximumSizeBytes = 280 << 20;
-  SiteStore.shared.load();
-  Library.shared.load();
-  CollectionStore.shared.load();
-  Vault.shared.load();
-  ResumeStore.shared.load();
-  WatchLater.shared.load();
-  Taste.shared.load();
-  await SyncManager.shared.load();
-  CookieJar.load();
-  OfflineStore.shared.load();
-  if (Platform.isWindows) await windowManager.ensureInitialized();
+  await _step('sites', SiteStore.shared.load);
+  await _step('library', Library.shared.load);
+  await _step('collections', CollectionStore.shared.load);
+  await _step('vault', Vault.shared.load);
+  await _step('resume', ResumeStore.shared.load);
+  await _step('watch later', WatchLater.shared.load);
+  await _step('taste', Taste.shared.load);
+  await _step('sync', SyncManager.shared.load);
+  await _step('cookies', CookieJar.load);
+  await _step('offline', OfflineStore.shared.load);
+  if (Platform.isWindows) await _step('window', windowManager.ensureInitialized);
   AppSettings.shared.blocklistVersion.addListener(FeedEngine.shared.filtersChanged);
-  FeedEngine.shared.load();
-  await LockManager.shared.load();
+  await _step('feeds', FeedEngine.shared.load);
+  await _step('lock', LockManager.shared.load);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -76,11 +108,37 @@ Future<void> main(List<String> args) async {
   );
   WindowInbox.start();
   openInNewWindow = WindowViewer.open;
-  if (windowItems != null) {
-    await windowManager.setTitle('iNUTT');
-    await windowManager.setSize(const Size(900, 1000));
+  final items = windowItems;
+  if (items != null) {
+    await _step('window title', () async {
+      await windowManager.setTitle('iNUTT');
+      await windowManager.setSize(const Size(900, 1000));
+    });
   }
-  runApp(INuttApp(windowItems: windowItems));
+  runApp(INuttApp(windowItems: items));
+}
+
+/// Shown only when the app could not even reach its storage, so a broken start is never a silent one.
+class StartupErrorApp extends StatelessWidget {
+  final String message;
+  const StartupErrorApp({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: Scaffold(
+      backgroundColor: const Color(0xFF0D0F14),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: SelectableText(
+            'iNUTT could not start.\n\n$message',
+            style: const TextStyle(color: Colors.white, fontSize: 15),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class INuttApp extends StatelessWidget {

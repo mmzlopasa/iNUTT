@@ -45,7 +45,12 @@ class SyncManager extends ChangeNotifier {
       final t = j['last'] as int?;
       if (t != null) lastSync = DateTime.fromMillisecondsSinceEpoch(t);
     }
-    hasPassphrase = ((await _storage.read(key: 'syncPassphrase')) ?? '').isNotEmpty;
+    // Secure storage can throw on Windows when nothing was ever saved; that just means no passphrase.
+    try {
+      hasPassphrase = ((await _storage.read(key: 'syncPassphrase')) ?? '').isNotEmpty;
+    } catch (_) {
+      hasPassphrase = false;
+    }
     // Windows has no app-switch moment to rely on, so it also checks every few minutes while open.
     if (Platform.isWindows && !Disk.readOnly) _timer ??= Timer.periodic(const Duration(minutes: 3), (_) => syncIfNeeded());
   }
@@ -146,7 +151,7 @@ class SyncManager extends ChangeNotifier {
   Future<void> _run() async {
     final loc = location;
     if (loc == null) throw SyncError('Pick where the sync file is kept first.');
-    final pass = await _storage.read(key: 'syncPassphrase') ?? '';
+    final pass = await _storage.read(key: 'syncPassphrase').catchError((_) => null) ?? '';
     if (pass.isEmpty) throw SyncError('Set a sync passphrase first.');
 
     final raw = await _read(loc);

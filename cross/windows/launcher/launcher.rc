@@ -1,0 +1,2 @@
+// Same icon as the app, so the top-level iNUTT.exe looks like it.
+1 ICON "..\\runner\\resources\\app_icon.ico"
