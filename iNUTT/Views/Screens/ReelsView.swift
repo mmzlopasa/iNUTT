@@ -239,7 +239,7 @@ struct ReelsView: View {
         .onAppear { updateVisible() }
         .onChange(of: router.tab) { _ in updateVisible() }
         .onChange(of: lock.isLocked) { _ in updateVisible() }
-        .onChange(of: phase) { _ in updateVisible() }
+        .onChange(of: phase) { p in updateVisible(phase: p) }
         .onChange(of: settings.reelsSource) { _ in
             index = 0
             ReelsCursor.shared.index = 0
@@ -248,8 +248,9 @@ struct ReelsView: View {
         .sheet(isPresented: $showSource) { sourceSheet }
     }
 
-    private func updateVisible() {
-        ReelsCursor.shared.visible = router.tab == .reels && !lock.isLocked && phase == .active
+    /// Inside onChange the view still holds the old phase, so the new one is passed in.
+    private func updateVisible(phase: ScenePhase? = nil) {
+        ReelsCursor.shared.visible = router.tab == .reels && !lock.isLocked && (phase ?? self.phase) == .active
     }
 
     private var topBar: some View {

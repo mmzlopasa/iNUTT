@@ -72,7 +72,8 @@ struct RootView: View {
         .onAppear { updateLock() }
         .onChange(of: lock.isLocked) { _ in updateLock() }
         .onChange(of: phase) { p in
-            updateLock()
+            // Inside onChange the view still holds the old phase, so pass the new one.
+            updateLock(phase: p)
             // Face ID can't run while the app is in the background; ask again when it is back.
             if p == .active && lock.isLocked { Task { await lock.authenticateBiometric() } }
         }
@@ -86,8 +87,9 @@ struct RootView: View {
 }
 
 extension RootView {
-    func updateLock() {
-        LockWindow.shared.update(locked: lock.isLocked, covered: settings.hideInSwitcher && phase != .active)
+    func updateLock(phase: ScenePhase? = nil) {
+        let current = phase ?? self.phase
+        LockWindow.shared.update(locked: lock.isLocked, covered: settings.hideInSwitcher && current != .active)
     }
 }
 
