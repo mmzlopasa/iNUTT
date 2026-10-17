@@ -45,6 +45,7 @@ enum Net {
     }
 
     static func fetch(_ url: URL, referer: URL? = nil, policy: URLRequest.CachePolicy = .reloadRevalidatingCacheData) async throws -> (Data, HTTPURLResponse?) {
+        SiteAdapters.prepare(url)
         var req = request(url, referer: referer, policy: policy)
         req.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7", forHTTPHeaderField: "Accept")
         let (data, resp) = try await session.data(for: req)
@@ -96,7 +97,11 @@ enum Net {
     /// Headers AVPlayer should send so hot-link protected media plays.
     static func avHeaders(referer: URL?) -> [String: Any] {
         var h: [String: String] = ["User-Agent": userAgent]
-        if let referer { h["Referer"] = referer.absoluteString }
+        if let referer {
+            h["Referer"] = referer.absoluteString
+            // CDNs that check where a stream is played from also look at the origin.
+            if let scheme = referer.scheme, let host = referer.host { h["Origin"] = "\(scheme)://\(host)" }
+        }
         return ["AVURLAssetHTTPHeaderFieldsKey": h]
     }
 }
@@ -129,7 +134,7 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
     private func release(_ p: Priority) { active[p, default: 1] -= 1 }
 
     /// Creates an off-screen web view and starts loading. Returns once the first response arrived or failed.
-    private func open(_ url: URL, media: Bool) -> WKWebView {
+    private func open(_ url: URL, media: Bool) async -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = media ? [] : .all
@@ -142,6 +147,8 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
         // Attach behind everything so timers and lazy loading run normally.
         let host = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows.first }.first
         host?.insertSubview(web, at: 0)
+        // Adult sites show their content only once the age gate has been passed.
+        await SiteAdapters.prepare(url, store: config.websiteDataStore.httpCookieStore)
         web.load(Net.request(url))
         return web
     }
@@ -168,10 +175,13 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
     func render(_ url: URL, settle: Double = 1.6, priority: Priority = .background) async -> String? {
         await acquire(priority)
         defer { release(priority) }
-        let web = open(url, media: false)
+        let web = await open(url, media: false)
         defer { close(web) }
         let ok = await waitLoaded(web, timeout: 14)
         if !ok && web.url == nil { return nil }
+        if (try? await web.evaluateJavaScript(SiteAdapters.ageGateScript)) as? Int == 2 {
+            _ = await waitLoaded(web, timeout: 4)
+        }
         // Trigger lazy-loaded content.
         for _ in 0..<3 {
             _ = try? await web.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight); 1")
@@ -185,11 +195,12 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
     func renderMedia(_ url: URL) async -> (video: CapturedVideo?, html: String?) {
         await acquire(.user)
         defer { release(.user) }
-        let web = open(url, media: true)
+        let web = await open(url, media: true)
         defer { close(web) }
         let started = Date()
         while Date().timeIntervalSince(started) < 9 {
             try? await Task.sleep(nanoseconds: 250_000_000)
+            _ = try? await web.evaluateJavaScript(SiteAdapters.ageGateScript)
             _ = try? await web.evaluateJavaScript(Self.playScript)
             if let first = await collect(web).first(where: { !Self.isAd($0.url) }) { return (first, nil) }
         }
@@ -205,7 +216,7 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
     func captureVideos(_ url: URL, rounds: Int = 10, onFound: (([CapturedVideo]) -> Void)? = nil) async -> [CapturedVideo] {
         await acquire(.user)
         defer { release(.user) }
-        let web = open(url, media: true)
+        let web = await open(url, media: true)
         defer { close(web) }
 
         var found: [CapturedVideo] = []
@@ -224,6 +235,7 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
         let started = Date()
         while Date().timeIntervalSince(started) < 10, !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 400_000_000)
+            _ = try? await web.evaluateJavaScript(SiteAdapters.ageGateScript)
             _ = try? await web.evaluateJavaScript(Self.playScript)
             take(await collect(web))
             if !found.isEmpty && Date().timeIntervalSince(started) > 2.5 { break }
@@ -248,14 +260,14 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
     }
 
     /// Pre-roll and tracking clips that pages load next to the real video.
-    static func isAd(_ u: URL) -> Bool {
+    nonisolated static func isAd(_ u: URL) -> Bool {
         let s = u.absoluteString.lowercased()
         return ["/ads/", "doubleclick", "googlesyndication", "imasdk", "adserver", "/vast", "preroll", "pre-roll", "exoclick", "trafficjunky", "juicyads"]
             .contains { s.contains($0) }
     }
 
     /// HLS variants of one video share a folder; count them once.
-    static func videoKey(_ u: URL) -> String {
+    nonisolated static func videoKey(_ u: URL) -> String {
         u.pathExtension.lowercased() == "m3u8" ? (u.host ?? "") + u.deletingLastPathComponent().path : (u.host ?? "") + u.path
     }
 

@@ -24,6 +24,8 @@ enum Scraper {
         var items: [MediaItem] = []
         var cardCategories: [SiteCategory] = []
         var seenCategories = Set<String>()
+        // Cards that open another site; used when the site is an aggregator that only links out.
+        var outbound: [MediaItem] = []
 
         func add(_ item: MediaItem) {
             let key = (item.pageURL ?? item.mediaURL ?? item.thumbnailURL)?.absoluteString ?? item.id
@@ -69,8 +71,7 @@ enum Scraper {
             if thumb == nil && hrefKind == nil { continue }
             if let t = thumb, isJunkImage(t) { continue }
 
-            // Skip ads / outbound links that are not media.
-            if hrefKind == nil, HTML.registrableDomain(href.host) != siteDomain, !isKnownMediaHost(href.host) { continue }
+            let isOutbound = hrefKind == nil && HTML.registrableDomain(href.host) != siteDomain && !isKnownMediaHost(href.host)
             // Skip links that just point at the listing again.
             if hrefKind == nil, href.path == baseURL.path, href.query == baseURL.query { continue }
 
@@ -79,7 +80,7 @@ enum Scraper {
             // Tiles like "Amateur · 1,234 videos" are categories even when the URL does not say so.
             let countHint = duration == nil && HTML.firstMatch(countHintPattern, in: text, group: 0) != nil
             // Category tiles (a thumbnail linking to a category page) become categories, not media.
-            if hrefKind == nil, HTML.registrableDomain(href.host) == siteDomain, isCategoryURL(href) || countHint {
+            if hrefKind == nil, !isOutbound, HTML.registrableDomain(href.host) == siteDomain, isCategoryURL(href) || countHint {
                 var name = cleanTitle(attrs["title"] ?? (text.isEmpty ? (alt ?? "") : text), duration: nil)
                 name = HTML.regex(countHintPattern).stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name), withTemplate: "")
                     .trimmingCharacters(in: CharacterSet.whitespaces.union(.punctuationCharacters))
@@ -104,11 +105,20 @@ enum Scraper {
             else if MediaKind.guess(from: thumb) == .gif { kind = .gif }
             else if videoHint { kind = .video }
 
-            add(MediaItem(siteID: site.id, siteName: site.name, title: title,
-                          thumbnailURL: thumb ?? (hrefKind == .image ? href : nil),
-                          mediaURL: hrefKind != nil ? href : nil,
-                          pageURL: hrefKind == nil ? href : nil,
-                          kind: kind, duration: duration, categoryName: categoryName))
+            let item = MediaItem(siteID: site.id, siteName: site.name, title: title,
+                                 thumbnailURL: thumb ?? (hrefKind == .image ? href : nil),
+                                 mediaURL: hrefKind != nil ? href : nil,
+                                 pageURL: hrefKind == nil ? href : nil,
+                                 kind: kind, duration: duration, categoryName: categoryName)
+            if isOutbound {
+                // Only real video cards: ads rarely carry a duration or a title.
+                if thumb != nil, duration != nil || (videoHint && !title.isEmpty) { outbound.append(item) }
+            } else {
+                add(item)
+            }
+        }
+        if items.count < 6, outbound.count >= 4 {
+            for item in outbound { add(item) }
         }
 
         // 2) Inline videos on the page itself.
@@ -165,8 +175,11 @@ enum Scraper {
             guard let u = HTML.resolve(raw, base: pageURL) else { return }
             let ext = u.pathExtension.lowercased()
             guard ["mp4", "m4v", "mov", "m3u8", "webm"].contains(ext) || u.absoluteString.contains(".m3u8") || u.absoluteString.contains(".mp4") else { return }
-            if videos.contains(where: { $0.0 == u }) { return }
-            videos.append((u, quality(of: u, label: label)))
+            if videos.contains(where: { $0.0 == u }) || PageRenderer.isAd(u) { return }
+            // Hover previews and trailers are only a last resort.
+            let lower = u.absoluteString.lowercased()
+            let isPreview = ["preview", "trailer", "teaser", "/thumbs/", "thumb_", "_thumb"].contains { lower.contains($0) }
+            videos.append((u, isPreview ? 1 : quality(of: u, label: label)))
         }
 
         for m in HTML.matches(#"<video\b([^>]*)>(.*?)</video>"#, in: html) {
@@ -180,9 +193,24 @@ enum Scraper {
         for key in ["og:video:secure_url", "og:video:url", "og:video", "twitter:player:stream"] {
             addVideo(meta(key, in: html))
         }
+        // Players keep their files in scripts, often JSON-escaped.
+        let flat = html.replacingOccurrences(of: "\\/", with: "/").replacingOccurrences(of: "\\u002F", with: "/")
+            .replacingOccurrences(of: "\\u0026", with: "&").replacingOccurrences(of: "&amp;", with: "&")
+        // Pornhub-family players: one entry per quality.
+        for m in HTML.matches(#"\{[^{}]*?"videoUrl"\s*:\s*"([^"]+)"[^{}]*\}"#, in: flat, limit: 30) {
+            guard let url = m[1], !url.contains("get_media") else { continue }
+            let q = HTML.firstMatch(#""quality"\s*:\s*"?(\d{3,4})"#, in: m[0] ?? "")
+            addVideo(url, label: q)
+        }
+        // XVideos-family players.
+        for (pattern, label) in [(#"setVideoHLS\(\s*['"]([^'"]+)"#, "1080"), (#"setVideoUrlHigh\(\s*['"]([^'"]+)"#, "720"), (#"setVideoUrlLow\(\s*['"]([^'"]+)"#, "360")] {
+            if let u = HTML.firstMatch(pattern, in: flat) { addVideo(u, label: label) }
+        }
+        // KVS players.
+        for (u, label) in SiteAdapters.kvsVideos(in: flat) { addVideo(u, label: label) }
         // JSON-ish keys commonly used by players.
-        let jsonKeys = #"["'](?:contentUrl|file|src|videoUrl|video_url|mp4|hls|hlsUrl|url|source|stream_url|videoSrc)["']\s*:\s*["']([^"']+\.(?:mp4|m3u8|webm|mov)[^"']*)["']"#
-        for m in HTML.matches(jsonKeys, in: html, limit: 40) { addVideo(m[1]) }
+        let jsonKeys = #"["']?(?:contentUrl|embedUrl|file|src|videoUrl|video_url|mp4|hls|hlsUrl|hls_url|url|source|stream_url|streamUrl|videoSrc|video_src|playlist|m3u8|high|low)["']?\s*:\s*["']([^"']+\.(?:mp4|m3u8|webm|mov)[^"']*)["']"#
+        for m in HTML.matches(jsonKeys, in: flat, limit: 60) { addVideo(m[1]) }
         for m in HTML.matches(#"<source\b([^>]*)>"#, in: html, limit: 20) {
             let sa = HTML.attributes(m[1] ?? "")
             addVideo(sa["src"], label: sa["size"] ?? sa["label"] ?? sa["res"])
@@ -205,7 +233,7 @@ enum Scraper {
             if let m = pick(mp4s), let q = mp4s.first(where: { $0.0 == m })?.1, q >= 720 || hls.isEmpty {
                 best = m
             } else {
-                best = hls.first?.0 ?? pick(mp4s)
+                best = pick(hls) ?? pick(mp4s)
             }
             if let best { return ResolvedMedia(url: best, kind: .video, gallery: poster.map { [$0] } ?? [], referer: pageURL) }
         }
@@ -452,7 +480,8 @@ enum Scraper {
         let srcset = a["data-srcset"] ?? a["srcset"] ?? a["data-lazy-srcset"]
         if let s = srcset, let u = HTML.bestFromSrcset(s, base: base, maxWidth: preferSmall ? 800 : 3840) { return u }
         let order = preferSmall
-            ? ["data-src", "data-original", "data-lazy-src", "data-lazy", "data-thumb", "data-url", "src", "data-full", "data-large"]
+            ? ["data-src", "data-original", "data-lazy-src", "data-lazy", "data-mediumthumb", "data-thumb_url", "data-thumb-url",
+               "data-thumb", "data-image", "data-webp", "data-poster", "data-url", "src", "data-full", "data-large"]
             : ["data-full", "data-large", "data-zoom-image", "data-hi-res", "data-original", "data-src", "data-lazy-src", "data-lazy", "src"]
         for key in order {
             if let v = a[key], let u = HTML.resolve(v, base: base), !isPlaceholder(u) { return u }
@@ -478,7 +507,7 @@ enum Scraper {
 
     static func isVideoPath(_ p: String) -> Bool {
         let l = p.lowercased()
-        return ["/video", "/videos/", "/watch", "/v/", "/embed/", "/movie", "/clip", "/vod/", "/play/"].contains { l.contains($0) }
+        return ["/video", "/videos/", "/watch", "/v/", "/embed/", "/movie", "/clip", "/vod/", "/play/", "view_video", "/porn-video", "/sex-video", "/scene"].contains { l.contains($0) }
     }
 
     static func isKnownMediaHost(_ host: String?) -> Bool {

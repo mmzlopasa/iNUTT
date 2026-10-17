@@ -314,19 +314,36 @@ final class FeedEngine: ObservableObject {
                 return r
             }
         }
+        // App-only sites: read their feed API.
+        if SiteAdapters.isFikFap(url) {
+            let after = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "inuttAfter" }?.value
+            if let r = try? await SiteAdapters.fikfapFeed(site: site, after: after) { return r }
+        }
         var result = ScrapeResult()
         var staticOK = false
+        var staticError: Error?
         if site.renderMode != .full || !allowRender {
-            let (data, resp) = try await Net.fetch(url)
-            let text = Net.text(data, response: resp)
-            let finalURL = resp?.url ?? url
-            if Scraper.looksLikeFeed(text) {
-                return Scraper.parseFeed(xml: text, baseURL: finalURL, site: site, categoryName: categoryName)
+            do {
+                let (data, resp) = try await Net.fetch(url)
+                let finalURL = resp?.url ?? url
+                if SiteAdapters.looksLikeJSON(data) {
+                    let r = SiteAdapters.parseJSONListing(data, base: finalURL, site: site, categoryName: categoryName)
+                    if !r.items.isEmpty { return r }
+                }
+                let text = Net.text(data, response: resp)
+                if Scraper.looksLikeFeed(text) {
+                    return Scraper.parseFeed(xml: text, baseURL: finalURL, site: site, categoryName: categoryName)
+                }
+                result = Scraper.parseListing(html: text, baseURL: finalURL, site: site, categoryName: categoryName)
+                staticOK = true
+            } catch {
+                // Blocked or empty for plain requests (bot checks, app shells): the browser may still get it.
+                guard allowRender else { throw error }
+                staticError = error
             }
-            result = Scraper.parseListing(html: text, baseURL: finalURL, site: site, categoryName: categoryName)
-            staticOK = true
         }
         let needsRender = site.renderMode == .full || (site.renderMode == .auto && result.items.count < 6 && result.categories.count < 6)
+        if let staticError, !needsRender { throw staticError }
         if allowRender && needsRender {
             if let html = await PageRenderer.shared.render(url) {
                 let r2 = Scraper.parseListing(html: html, baseURL: url, site: site, categoryName: categoryName)
@@ -338,7 +355,7 @@ final class FeedEngine: ObservableObject {
                 if result.iconURL == nil { result.iconURL = r2.iconURL }
                 if result.title == nil { result.title = r2.title }
             } else if !staticOK {
-                throw NetError.empty
+                throw staticError ?? NetError.empty
             }
         }
         return result
