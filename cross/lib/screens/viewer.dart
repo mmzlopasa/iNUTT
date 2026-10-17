@@ -16,6 +16,7 @@ import '../ui/media_widgets.dart';
 import '../ui/remote_image.dart';
 import '../ui/router.dart';
 import '../ui/theme.dart';
+import 'forums.dart';
 
 /// Full-screen pager for images, GIFs and videos. Swipe sideways to browse, drag down to close.
 class MediaViewer extends StatefulWidget {
@@ -80,70 +81,79 @@ class _MediaViewerState extends State<MediaViewer> {
         if (e.logicalKey == LogicalKeyboardKey.arrowRight) _go(1);
         if (e.logicalKey == LogicalKeyboardKey.arrowLeft) _go(-1);
       },
-      child: Stack(children: [
-        Positioned.fill(child: ColoredBox(color: Colors.black.withValues(alpha: fade))),
-        Positioned.fill(
-          child: GestureDetector(
-            onVerticalDragUpdate: _zoomed ? null : (d) => setState(() => _dragY += d.delta.dy),
-            onVerticalDragEnd: _zoomed
-                ? null
-                : (d) {
-                    if (_dragY.abs() > 130 || (d.primaryVelocity ?? 0).abs() > 900) {
-                      Navigator.pop(context);
-                    } else {
-                      setState(() => _dragY = 0);
-                    }
-                  },
-            child: Transform.translate(
-              offset: Offset(0, _dragY),
-              child: Transform.scale(
-                scale: 1 - (_dragY.abs() / 2000).clamp(0.0, 0.12),
-                child: PageView.builder(
-                  controller: _page,
-                  physics: _zoomed ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
-                  itemCount: widget.items.length,
-                  onPageChanged: (i) {
-                    HapticFeedback.selectionClick();
-                    setState(() {
-                      _index = i;
-                      _zoomed = false;
-                    });
-                    Library.shared.record(_current);
-                    _preload(i);
-                  },
-                  itemBuilder: (context, i) => MediaPage(
-                    key: ValueKey(widget.items[i].id),
-                    item: widget.items[i],
-                    isActive: i == _index,
-                    onTap: () => setState(() => _chrome = !_chrome),
-                    onZoom: (z) => setState(() => _zoomed = z),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: ColoredBox(color: Colors.black.withValues(alpha: fade)),
+          ),
+          Positioned.fill(
+            child: GestureDetector(
+              onVerticalDragUpdate: _zoomed ? null : (d) => setState(() => _dragY += d.delta.dy),
+              onVerticalDragEnd: _zoomed
+                  ? null
+                  : (d) {
+                      if (_dragY.abs() > 130 || (d.primaryVelocity ?? 0).abs() > 900) {
+                        Navigator.pop(context);
+                      } else {
+                        setState(() => _dragY = 0);
+                      }
+                    },
+              child: Transform.translate(
+                offset: Offset(0, _dragY),
+                child: Transform.scale(
+                  scale: 1 - (_dragY.abs() / 2000).clamp(0.0, 0.12),
+                  child: PageView.builder(
+                    controller: _page,
+                    physics: _zoomed ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
+                    itemCount: widget.items.length,
+                    onPageChanged: (i) {
+                      HapticFeedback.selectionClick();
+                      setState(() {
+                        _index = i;
+                        _zoomed = false;
+                      });
+                      Library.shared.record(_current);
+                      _preload(i);
+                    },
+                    itemBuilder: (context, i) => MediaPage(
+                      key: ValueKey(widget.items[i].id),
+                      item: widget.items[i],
+                      isActive: i == _index,
+                      onTap: () => setState(() => _chrome = !_chrome),
+                      onZoom: (z) => setState(() => _zoomed = z),
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-        AnimatedOpacity(
-          opacity: _chrome ? 1 : 0,
-          duration: const Duration(milliseconds: 200),
-          child: IgnorePointer(ignoring: !_chrome, child: _bars(context)),
-        ),
-        ListenableBuilder(
-          listenable: DownloadManager.shared,
-          builder: (_, __) {
-            final t = DownloadManager.shared.toast;
-            return Positioned(
-              top: MediaQuery.paddingOf(context).top + 70,
-              left: 0,
-              right: 0,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
-                child: t == null ? const SizedBox.shrink() : Center(key: ValueKey(t.id), child: ToastView(toast: t)),
-              ),
-            );
-          },
-        ),
-      ]),
+          AnimatedOpacity(
+            opacity: _chrome ? 1 : 0,
+            duration: const Duration(milliseconds: 200),
+            child: IgnorePointer(ignoring: !_chrome, child: _bars(context)),
+          ),
+          ListenableBuilder(
+            listenable: DownloadManager.shared,
+            builder: (_, __) {
+              final t = DownloadManager.shared.toast;
+              return Positioned(
+                top: MediaQuery.paddingOf(context).top + 70,
+                left: 0,
+                right: 0,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: t == null
+                      ? const SizedBox.shrink()
+                      : Center(
+                          key: ValueKey(t.id),
+                          child: ToastView(toast: t),
+                        ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -151,76 +161,109 @@ class _MediaViewerState extends State<MediaViewer> {
     final item = _current;
     final wide = isWide(context);
     return SafeArea(
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: Row(children: [
-            _round(Icons.close_rounded, () => Navigator.pop(context)),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(item.siteName.toUpperCase(), style: T.mono(10, spacing: 1), maxLines: 1),
-                Text(item.displayTitle, style: T.text(14, weight: FontWeight.w600, color: Colors.white), maxLines: 1, overflow: TextOverflow.ellipsis),
-              ]),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Row(
+              children: [
+                _round(Icons.close_rounded, () => Navigator.pop(context)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(item.siteName.toUpperCase(), style: T.mono(10, spacing: 1), maxLines: 1),
+                      Text(
+                        item.displayTitle,
+                        style: T.text(14, weight: FontWeight.w600, color: Colors.white),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                Text('${_index + 1} / ${widget.items.length}', style: T.mono(12, color: Colors.white70)),
+                if (wide) ...[
+                  const SizedBox(width: 10),
+                  _round(Icons.chevron_left_rounded, () => _go(-1)),
+                  const SizedBox(width: 6),
+                  _round(Icons.chevron_right_rounded, () => _go(1)),
+                ],
+              ],
             ),
-            Text('${_index + 1} / ${widget.items.length}', style: T.mono(12, color: Colors.white70)),
-            if (wide) ...[
-              const SizedBox(width: 10),
-              _round(Icons.chevron_left_rounded, () => _go(-1)),
-              const SizedBox(width: 6),
-              _round(Icons.chevron_right_rounded, () => _go(1)),
-            ],
-          ]),
-        ),
-        const Spacer(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: Center(
-            child: Frosted(
-              radius: 26,
-              child: ListenableBuilder(
-                listenable: Listenable.merge([Library.shared, DownloadManager.shared]),
-                builder: (_, __) {
-                  final fav = Library.shared.isFavorite(item);
-                  final downloading = DownloadManager.shared.active.contains(item.id);
-                  return Row(mainAxisSize: MainAxisSize.min, children: [
-                    _action(fav ? Icons.favorite_rounded : Icons.favorite_border_rounded, fav ? 'Saved' : 'Favorite', () {
-                      HapticFeedback.lightImpact();
-                      Library.shared.toggleFavorite(item);
-                    }, active: fav),
-                    _action(downloading ? Icons.hourglass_top_rounded : Icons.download_rounded, 'Download',
-                        downloading ? null : () => DownloadManager.shared.download(item)),
-                    _action(Icons.link_rounded, 'Copy link', () {
-                      final u = item.pageUrl ?? item.mediaUrl;
-                      if (u != null) Clipboard.setData(ClipboardData(text: u.toString()));
-                      DownloadManager.shared.show('Link copied');
-                    }),
-                  ]);
-                },
+          ),
+          const Spacer(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Center(
+              child: Frosted(
+                radius: 26,
+                child: ListenableBuilder(
+                  listenable: Listenable.merge([Library.shared, DownloadManager.shared]),
+                  builder: (_, __) {
+                    final fav = Library.shared.isFavorite(item);
+                    final downloading = DownloadManager.shared.active.contains(item.id);
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _action(fav ? Icons.favorite_rounded : Icons.favorite_border_rounded, fav ? 'Saved' : 'Favorite', () {
+                          HapticFeedback.lightImpact();
+                          Library.shared.toggleFavorite(item);
+                        }, active: fav),
+                        _action(
+                          downloading ? Icons.hourglass_top_rounded : Icons.download_rounded,
+                          'Download',
+                          downloading ? null : () => DownloadManager.shared.download(item),
+                        ),
+                        _action(Icons.link_rounded, 'Copy link', () {
+                          final u = item.pageUrl ?? item.mediaUrl;
+                          if (u != null) Clipboard.setData(ClipboardData(text: u.toString()));
+                          DownloadManager.shared.show('Link copied');
+                        }),
+                        if ((item.pageUrl ?? item.mediaUrl)?.scheme.startsWith('http') == true)
+                          _action(
+                            Icons.public_rounded,
+                            'Open page',
+                            () => ForumsSection.open(context, (item.pageUrl ?? item.mediaUrl)!, item.siteName),
+                          ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 
   Widget _round(IconData icon, VoidCallback onTap) => Pressable(
-        onTap: onTap,
-        child: Frosted(radius: 21, child: SizedBox(width: 42, height: 42, child: Icon(icon, color: Colors.white, size: 22))),
-      );
+    onTap: onTap,
+    child: Frosted(
+      radius: 21,
+      child: SizedBox(width: 42, height: 42, child: Icon(icon, color: Colors.white, size: 22)),
+    ),
+  );
 
   Widget _action(IconData icon, String label, VoidCallback? onTap, {bool active = false}) => Pressable(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, color: active ? T.gold : Colors.white, size: 22),
-            const SizedBox(height: 3),
-            Text(label, style: T.text(10, weight: FontWeight.w500, color: Colors.white70)),
-          ]),
-        ),
-      );
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: active ? T.gold : Colors.white, size: 22),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: T.text(10, weight: FontWeight.w500, color: Colors.white70),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class MediaPage extends StatefulWidget {
@@ -323,13 +366,19 @@ class _MediaPageState extends State<MediaPage> {
       child = ZoomableImage(url: r.url, referer: r.referer, thumb: widget.item.thumbnailUrl, onTap: widget.onTap, onZoom: widget.onZoom);
     } else if (_failed) {
       child = Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.warning_amber_rounded, size: 36, color: T.gold),
-          const SizedBox(height: 12),
-          Text('Couldn\'t load this content', style: T.text(15, weight: FontWeight.w500, color: T.ink)),
-          const SizedBox(height: 12),
-          GhostButton(label: 'Try again', onPressed: _load),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.warning_amber_rounded, size: 36, color: T.gold),
+            const SizedBox(height: 12),
+            Text(
+              'Couldn\'t load this content',
+              style: T.text(15, weight: FontWeight.w500, color: T.ink),
+            ),
+            const SizedBox(height: 12),
+            GhostButton(label: 'Try again', onPressed: _load),
+          ],
+        ),
       );
     } else {
       child = _placeholder();
@@ -338,33 +387,44 @@ class _MediaPageState extends State<MediaPage> {
   }
 
   /// The grid thumbnail is already cached, so something is on screen instantly.
-  Widget _placeholder() => Stack(fit: StackFit.expand, children: [
-        if (widget.item.thumbnailUrl != null)
-          RemoteImage(url: widget.item.thumbnailUrl, referer: widget.item.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 600),
-        const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
-      ]);
+  Widget _placeholder() => Stack(
+    fit: StackFit.expand,
+    children: [
+      if (widget.item.thumbnailUrl != null)
+        RemoteImage(url: widget.item.thumbnailUrl, referer: widget.item.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 600),
+      const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+    ],
+  );
 
   Widget _listing() => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.grid_view_rounded, size: 34, color: T.gold),
-            const SizedBox(height: 12),
-            Text(widget.item.displayTitle, style: T.display(18, weight: FontWeight.w600), textAlign: TextAlign.center, maxLines: 2),
-            const SizedBox(height: 6),
-            Text('This is a category with more content.', style: T.text(14)),
-            const SizedBox(height: 16),
-            GoldButton(label: 'Open category', icon: Icons.arrow_forward_rounded, onPressed: () => AppRouter.shared.openListing(widget.item)),
-          ]),
-        ),
-      );
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.grid_view_rounded, size: 34, color: T.gold),
+          const SizedBox(height: 12),
+          Text(
+            widget.item.displayTitle,
+            style: T.display(18, weight: FontWeight.w600),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+          ),
+          const SizedBox(height: 6),
+          Text('This is a category with more content.', style: T.text(14)),
+          const SizedBox(height: 16),
+          GoldButton(label: 'Open category', icon: Icons.arrow_forward_rounded, onPressed: () => AppRouter.shared.openListing(widget.item)),
+        ],
+      ),
+    ),
+  );
 
   Widget _gallery(ResolvedMedia r) => ListView.separated(
-        padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top + 64, bottom: 120),
-        itemCount: r.gallery.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 8),
-        itemBuilder: (context, i) => _GalleryImage(url: r.gallery[i], referer: r.referer),
-      );
+    padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top + 64, bottom: 120),
+    itemCount: r.gallery.length,
+    separatorBuilder: (_, __) => const SizedBox(height: 8),
+    itemBuilder: (context, i) => _GalleryImage(url: r.gallery[i], referer: r.referer),
+  );
 }
 
 class _GalleryImage extends StatefulWidget {
@@ -393,9 +453,9 @@ class _GalleryImageState extends State<_GalleryImage> {
 
   @override
   Widget build(BuildContext context) => AspectRatio(
-        aspectRatio: _aspect,
-        child: RemoteImage(url: widget.url, referer: widget.referer, fit: BoxFit.contain, decodeWidth: 1600),
-      );
+    aspectRatio: _aspect,
+    child: RemoteImage(url: widget.url, referer: widget.referer, fit: BoxFit.contain, decodeWidth: 1600),
+  );
 }
 
 /// Pinch / double-tap / scroll-wheel zoom for one image at full resolution.
@@ -436,31 +496,34 @@ class _ZoomableImageState extends State<ZoomableImage> {
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-        onTap: widget.onTap,
-        onDoubleTapDown: (d) => _tap = d,
-        onDoubleTap: () {
-          if (_t.value.getMaxScaleOnAxis() > 1.01) {
-            _t.value = Matrix4.identity();
-          } else {
-            final p = _tap?.localPosition ?? Offset.zero;
-            _t.value = Matrix4.identity()
-              ..translateByDouble(-p.dx * 1.5, -p.dy * 1.5, 0, 1)
-              ..scaleByDouble(2.5, 2.5, 1, 1);
-          }
-        },
-        child: InteractiveViewer(
-          transformationController: _t,
-          minScale: 1,
-          maxScale: 6,
-          child: SizedBox.expand(
-            child: _ready
-                ? RemoteImage(url: widget.url, referer: widget.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: null)
-                : Stack(fit: StackFit.expand, children: [
-                    if (widget.thumb != null)
-                      RemoteImage(url: widget.thumb, referer: widget.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 600),
-                    const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
-                  ]),
-          ),
-        ),
-      );
+    onTap: widget.onTap,
+    onDoubleTapDown: (d) => _tap = d,
+    onDoubleTap: () {
+      if (_t.value.getMaxScaleOnAxis() > 1.01) {
+        _t.value = Matrix4.identity();
+      } else {
+        final p = _tap?.localPosition ?? Offset.zero;
+        _t.value = Matrix4.identity()
+          ..translateByDouble(-p.dx * 1.5, -p.dy * 1.5, 0, 1)
+          ..scaleByDouble(2.5, 2.5, 1, 1);
+      }
+    },
+    child: InteractiveViewer(
+      transformationController: _t,
+      minScale: 1,
+      maxScale: 6,
+      child: SizedBox.expand(
+        child: _ready
+            ? RemoteImage(url: widget.url, referer: widget.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: null)
+            : Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (widget.thumb != null)
+                    RemoteImage(url: widget.thumb, referer: widget.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 600),
+                  const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+                ],
+              ),
+      ),
+    ),
+  );
 }

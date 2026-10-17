@@ -6,83 +6,139 @@ import '../core/stores.dart';
 import '../ui/remote_image.dart';
 import '../ui/router.dart';
 import '../ui/theme.dart';
+import 'forums.dart';
 import 'settings.dart';
 
 class SitesView extends StatelessWidget {
   const SitesView({super.key});
 
+  /// 0 = sites, 1 = forums; kept for the session.
+  static final section = ValueNotifier<int>(0);
+
+  Widget _segment(String label, int index) => Expanded(
+    child: Pressable(
+      onTap: () => section.value = index,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        height: 36,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: section.value == index ? T.gold : Colors.transparent, borderRadius: BorderRadius.circular(18)),
+        child: Text(
+          label,
+          style: T.text(14, weight: FontWeight.w600, color: section.value == index ? T.onGold : T.ink),
+        ),
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: Listenable.merge([FeedEngine.shared, SiteStore.shared]),
-        builder: (context, _) {
-          final store = SiteStore.shared;
-          final cols = MediaQuery.sizeOf(context).width >= 900 ? 3 : (MediaQuery.sizeOf(context).width >= 600 ? 2 : 1);
-          return SkyScaffold(
-            body: RefreshIndicator(
-              color: T.gold,
-              onRefresh: FeedEngine.shared.refreshAll,
-              child: CustomScrollView(slivers: [
-                SliverToBoxAdapter(
-                  child: SafeArea(
-                    bottom: false,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                      child: Row(children: [
+    listenable: Listenable.merge([FeedEngine.shared, SiteStore.shared, section]),
+    builder: (context, _) {
+      final store = SiteStore.shared;
+      final forums = section.value == 1;
+      final cols = MediaQuery.sizeOf(context).width >= 900 ? 3 : (MediaQuery.sizeOf(context).width >= 600 ? 2 : 1);
+      return SkyScaffold(
+        body: RefreshIndicator(
+          color: T.gold,
+          onRefresh: FeedEngine.shared.refreshAll,
+          child: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                    child: Row(
+                      children: [
                         Expanded(
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text('SITES', style: T.mono(11, spacing: 1.2)),
-                            Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-                              Text('${store.sites.length}', style: T.dot(34)),
-                              const SizedBox(width: 6),
-                              Text('/ ${Limits.maxSites}', style: T.mono(14)),
-                            ]),
-                          ]),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('SITES', style: T.mono(11, spacing: 1.2)),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.baseline,
+                                textBaseline: TextBaseline.alphabetic,
+                                children: [
+                                  Text('${store.sites.length}', style: T.dot(34)),
+                                  const SizedBox(width: 6),
+                                  Text('/ ${Limits.maxSites}', style: T.mono(14)),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                        GoldButton(
-                          label: 'Add',
-                          icon: Icons.add_rounded,
-                          onPressed: store.canAdd
-                              ? () => Navigator.of(context)
-                                  .push(MaterialPageRoute<void>(builder: (_) => const AddSiteView(), fullscreenDialog: true))
-                              : null,
-                        ),
-                      ]),
+                        if (!forums)
+                          GoldButton(
+                            label: 'Add',
+                            icon: Icons.add_rounded,
+                            onPressed: store.canAdd
+                                ? () =>
+                                      Navigator.of(context)
+                                          .push(MaterialPageRoute<void>(builder: (_) => const AddSiteView(), fullscreenDialog: true))
+                                : null,
+                          ),
+                      ],
                     ),
                   ),
                 ),
-                if (store.sites.isEmpty)
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: SliverToBoxAdapter(
-                      child: EmptyState(
-                        icon: Icons.public_rounded,
-                        title: 'No sites',
-                        message: 'Add up to 50 sites. iNUTT finds images, GIFs, videos and categories automatically.',
-                        buttonTitle: 'Add site',
-                        onButton: () =>
-                            Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AddSiteView(), fullscreenDialog: true)),
-                      ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                sliver: SliverToBoxAdapter(
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(21),
+                      border: Border.all(color: T.line2),
                     ),
-                  )
-                else
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: SliverGrid(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: cols, mainAxisSpacing: 12, crossAxisSpacing: 12, mainAxisExtent: 186),
-                      delegate: SliverChildBuilderDelegate(
-                        (context, i) => Pressable(
-                            onTap: () => AppRouter.shared.openSite(store.sites[i].id), child: SiteCard(site: store.sites[i])),
-                        childCount: store.sites.length,
-                      ),
+                    child: Row(children: [_segment('Sites', 0), _segment('Forums', 1)]),
+                  ),
+                ),
+              ),
+              if (forums)
+                const SliverToBoxAdapter(child: ForumsSection())
+              else if (store.sites.isEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverToBoxAdapter(
+                    child: EmptyState(
+                      icon: Icons.public_rounded,
+                      title: 'No sites',
+                      message: 'Add up to 50 sites. iNUTT finds images, GIFs, videos and categories automatically.',
+                      buttonTitle: 'Add site',
+                      onButton: () =>
+                          Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AddSiteView(), fullscreenDialog: true)),
                     ),
                   ),
-                const SliverToBoxAdapter(child: SizedBox(height: 110)),
-              ]),
-            ),
-          );
-        },
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverGrid(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: cols,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      mainAxisExtent: 186,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, i) => Pressable(
+                        onTap: () => AppRouter.shared.openSite(store.sites[i].id),
+                        child: SiteCard(site: store.sites[i]),
+                      ),
+                      childCount: store.sites.length,
+                    ),
+                  ),
+                ),
+              const SliverToBoxAdapter(child: SizedBox(height: 110)),
+            ],
+          ),
+        ),
       );
+    },
+  );
 }
 
 class SiteCard extends StatelessWidget {
@@ -101,56 +157,78 @@ class SiteCard extends StatelessWidget {
     return GlassCard(
       radius: 22,
       padding: const EdgeInsets.all(14),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          SiteIcon(site: site, size: 44),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(site.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: T.display(17, weight: FontWeight.w600)),
-              Text(site.host, maxLines: 1, overflow: TextOverflow.ellipsis, style: T.mono(11)),
-            ]),
-          ),
-          const SizedBox(width: 8),
-          if (engine.isLoading(site))
-            const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-          else if (!site.enabled)
-            Text('DISABLED', style: T.mono(9))
-          else
-            const Icon(Icons.chevron_right_rounded, color: T.muted),
-        ]),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 64,
-          child: previews.isEmpty
-              ? const Shimmer(radius: 10)
-              : Row(children: [
-                  for (var i = 0; i < previews.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 6),
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: RemoteImage(url: previews[i], referer: site.url, decodeWidth: 160),
-                      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SiteIcon(site: site, size: 44),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      site.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: T.display(17, weight: FontWeight.w600),
                     ),
+                    Text(site.host, maxLines: 1, overflow: TextOverflow.ellipsis, style: T.mono(11)),
                   ],
-                ]),
-        ),
-        const Spacer(),
-        Row(children: [
-          _stat(Icons.layers_rounded, '${items.length}'),
-          const SizedBox(width: 14),
-          _stat(Icons.folder_rounded, '${site.categories.length} cat.'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (engine.isLoading(site))
+                const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              else if (!site.enabled)
+                Text('DISABLED', style: T.mono(9))
+              else
+                const Icon(Icons.chevron_right_rounded, color: T.muted),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 64,
+            child: previews.isEmpty
+                ? const Shimmer(radius: 10)
+                : Row(
+                    children: [
+                      for (var i = 0; i < previews.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 6),
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: RemoteImage(url: previews[i], referer: site.url, decodeWidth: 160),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+          ),
           const Spacer(),
-          if (site.lastRefreshed != null) Flexible(child: Text(relativeTime(site.lastRefreshed!), style: T.mono(10), maxLines: 1, overflow: TextOverflow.ellipsis)),
-        ]),
-      ]),
+          Row(
+            children: [
+              _stat(Icons.layers_rounded, '${items.length}'),
+              const SizedBox(width: 14),
+              _stat(Icons.folder_rounded, '${site.categories.length} cat.'),
+              const Spacer(),
+              if (site.lastRefreshed != null)
+                Flexible(
+                  child: Text(relativeTime(site.lastRefreshed!), style: T.mono(10), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _stat(IconData icon, String text) => Row(children: [
-        Icon(icon, size: 12, color: T.gold),
-        const SizedBox(width: 5),
-        Text(text, style: T.mono(11, color: T.body)),
-      ]);
+  Widget _stat(IconData icon, String text) => Row(
+    children: [
+      Icon(icon, size: 12, color: T.gold),
+      const SizedBox(width: 5),
+      Text(text, style: T.mono(11, color: T.body)),
+    ],
+  );
 }
