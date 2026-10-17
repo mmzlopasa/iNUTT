@@ -95,6 +95,7 @@ struct MediaCard: View {
     var aspect: CGFloat = 4 / 5
     var showTitle = true
     @ObservedObject private var marks = FavoriteMarks.shared
+    @ObservedObject private var seen = SeenMarks.shared
 
     var body: some View {
         Color.clear
@@ -114,7 +115,20 @@ struct MediaCard: View {
                         }
                 }
             }
-            .overlay(alignment: .topTrailing) { KindBadge(item: item).padding(8) }
+            .overlay {
+                // Already opened: dimmed, so new things stand out.
+                if seen.contains(item) { Color.black.opacity(0.35).allowsHitTesting(false) }
+            }
+            .overlay(alignment: .topTrailing) {
+                HStack(spacing: 4) {
+                    if seen.contains(item) {
+                        Image(systemName: "eye.fill").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(width: 20, height: 20).background(Circle().fill(.black.opacity(0.45)))
+                    }
+                    KindBadge(item: item)
+                }
+                .padding(8)
+            }
             .overlay(alignment: .topLeading) {
                 if marks.contains(item) {
                     Image(systemName: "heart.fill")

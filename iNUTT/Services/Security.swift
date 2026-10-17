@@ -69,6 +69,9 @@ final class LockManager: ObservableObject {
 
     func unlock() { isLocked = false }
 
+    /// Locks right away, from the Home lock button.
+    func lockNow() { if isProtectionOn { isLocked = true } }
+
     func authenticateBiometric() async {
         guard AppSettings.shared.faceIDEnabled, !isAuthenticating else { return }
         let ctx = LAContext()

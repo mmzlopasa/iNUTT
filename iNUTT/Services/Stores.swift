@@ -92,6 +92,14 @@ final class SiteStore: ObservableObject {
 
 // MARK: - Favorites & history
 
+/// Ids of everything opened before, so cards can show it without redrawing on every history change.
+@MainActor
+final class SeenMarks: ObservableObject {
+    static let shared = SeenMarks()
+    @Published fileprivate(set) var ids = Set<String>()
+    func contains(_ item: MediaItem) -> Bool { ids.contains(item.id) }
+}
+
 /// Only the set of favorite ids, so grid cards redraw on a favorite change and not on every history record.
 @MainActor
 final class FavoriteMarks: ObservableObject {
@@ -113,6 +121,7 @@ final class Library: ObservableObject {
         history = Disk.load([HistoryEntry].self, "history.json") ?? []
         favoriteIDs = Set(favorites.map(\.id))
         FavoriteMarks.shared.ids = favoriteIDs
+        SeenMarks.shared.ids = Set(history.map(\.item.id))
     }
 
     func isFavorite(_ item: MediaItem) -> Bool { favoriteIDs.contains(item.id) }
@@ -132,17 +141,20 @@ final class Library: ObservableObject {
         guard AppSettings.shared.historyEnabled else { return }
         history.removeAll { $0.item.id == item.id }
         history.insert(HistoryEntry(item: item, viewedAt: Date()), at: 0)
+        if !SeenMarks.shared.ids.contains(item.id) { SeenMarks.shared.ids.insert(item.id) }
         if history.count > Limits.maxHistory { history.removeLast(history.count - Limits.maxHistory) }
         Disk.save(history, "history.json")
     }
 
     func removeHistory(_ ids: Set<UUID>) {
         history.removeAll { ids.contains($0.id) }
+        SeenMarks.shared.ids = Set(history.map(\.item.id))
         Disk.save(history, "history.json")
     }
 
     func clearHistory() {
         history = []
+        SeenMarks.shared.ids = []
         Disk.save(history, "history.json")
     }
 
@@ -176,6 +188,10 @@ final class AppSettings: ObservableObject {
     @Published var recentSearches: [String] { didSet { d.set(recentSearches, forKey: "recentSearches") } }
     /// The one site the Reels tab plays from.
     @Published var reelsSource: String { didSet { d.set(reelsSource, forKey: "reelsSource") } }
+    /// Reels move on to the next video when one ends.
+    @Published var reelsAutoNext: Bool { didSet { d.set(reelsAutoNext, forKey: "reelsAutoNext") } }
+    /// Home leaves out what you have already opened.
+    @Published var hideSeen: Bool { didSet { d.set(hideSeen, forKey: "hideSeen") } }
 
     private init() {
         d.register(defaults: [
@@ -195,6 +211,8 @@ final class AppSettings: ObservableObject {
         hideInSwitcher = d.bool(forKey: "hideInSwitcher")
         recentSearches = d.stringArray(forKey: "recentSearches") ?? []
         reelsSource = d.string(forKey: "reelsSource") ?? ""
+        reelsAutoNext = d.bool(forKey: "reelsAutoNext")
+        hideSeen = d.bool(forKey: "hideSeen")
     }
 
     func addRecentSearch(_ q: String) {

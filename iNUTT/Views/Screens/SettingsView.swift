@@ -68,6 +68,8 @@ struct SettingsView: View {
                     Toggle(isOn: $settings.autoplay) { row("play.circle", "Autoplay") }
                     Toggle(isOn: $settings.loopVideos) { row("repeat", "Loop videos") }
                     Toggle(isOn: $settings.startMuted) { row("speaker.slash", "Start muted") }
+                    Toggle(isOn: $settings.reelsAutoNext) { row("arrow.down.to.line.compact", "Reels: next video when one ends") }
+                    Toggle(isOn: $settings.hideSeen) { row("eye.slash", "Hide watched on Home") }
                 } header: { sectionTitle("Playback") }
                 .listRowBackground(rowBG)
 

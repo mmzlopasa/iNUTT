@@ -9,11 +9,15 @@ struct HomeView: View {
     @State private var showAdd = false
     @State private var showHistory = false
     @EnvironmentObject private var router: Router
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var seen = SeenMarks.shared
+    @ObservedObject private var lock = LockManager.shared
 
     private var enabled: [Site] { sites.enabledSites }
 
     private var mixed: [MediaItem] {
-        let all = engine.mixedFeed(enabled)
+        var all = engine.mixedFeed(enabled)
+        if settings.hideSeen { all = all.filter { !seen.contains($0) } }
         guard let filter = router.homeFilter else { return all }
         return all.filter { $0.kind == filter }
     }
@@ -83,6 +87,14 @@ struct HomeView: View {
         }
     }
 
+    /// Opens everything Home shows in random order.
+    private func shuffle() {
+        let list = mixed.filter { $0.isListing != true }.shuffled()
+        guard !list.isEmpty else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        viewer.open(Array(list.prefix(300)), at: 0)
+    }
+
     private var latestTitle: String {
         router.homeFilter.map { "Latest \($0.label)" } ?? "Latest"
     }
@@ -103,7 +115,7 @@ struct HomeView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .center, spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(greeting.uppercased()).font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
                 Wordmark(size: 30)
@@ -112,6 +124,10 @@ struct HomeView: View {
             if engine.isRefreshingAll {
                 ProgressView().tint(Theme.gold).padding(.trailing, 4)
             }
+            if lock.isProtectionOn {
+                circleButton("lock.fill") { lock.lockNow() }
+            }
+            circleButton("shuffle") { shuffle() }
             circleButton("clock.arrow.circlepath") { showHistory = true }
             circleButton("plus") { showAdd = true }
             circleButton("gearshape.fill") { router.showSettings = true }
@@ -124,7 +140,7 @@ struct HomeView: View {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.ink)
-                .frame(width: 42, height: 42)
+                .frame(width: 38, height: 38)
                 .background(Circle().fill(Color.white.opacity(0.06)))
                 .overlay(Circle().strokeBorder(Theme.line2, lineWidth: 1))
         }

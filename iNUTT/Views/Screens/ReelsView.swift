@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import Combine
 import UIKit
 
 /// Loads the short videos of the one Reels source and keeps them for an instant start next time.
@@ -192,6 +193,8 @@ final class ReelsCursor: ObservableObject {
     static let shared = ReelsCursor()
     @Published var index = 0
     @Published var visible = false
+    /// Bumped when the reel on screen ended and the next one should slide in.
+    @Published var advance = 0
 }
 
 /// TikTok-style feed: one full-screen video at a time, swipe up for the next.
@@ -331,6 +334,8 @@ struct ReelsPager: UIViewControllerRepresentable {
         if items.indices.contains(index) {
             pvc.setViewControllers([context.coordinator.page(index)], direction: .forward, animated: false)
         }
+        context.coordinator.pvc = pvc
+        context.coordinator.watchAdvance()
         return pvc
     }
 
@@ -343,7 +348,30 @@ struct ReelsPager: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
         var parent: ReelsPager
+        weak var pvc: UIPageViewController?
+        private var advanceSub: AnyCancellable?
         init(_ p: ReelsPager) { parent = p }
+
+        /// Slides to the next reel when the one on screen ended (auto-scroll setting).
+        @MainActor
+        func watchAdvance() {
+            advanceSub = ReelsCursor.shared.$advance.dropFirst().sink { [weak self] _ in
+                guard let self, let pvc = self.pvc, let i = pvc.viewControllers?.first?.view.tag,
+                      self.parent.items.indices.contains(i + 1) else { return }
+                let next = i + 1
+                pvc.setViewControllers([self.page(next)], direction: .forward, animated: true) { _ in
+                    Task { @MainActor in self.settle(on: next) }
+                }
+            }
+        }
+
+        @MainActor
+        private func settle(on i: Int) {
+            parent.index = i
+            ReelsCursor.shared.index = i
+            Preloader.shared.preload(around: i, in: parent.items)
+            if i >= parent.items.count - 4 { parent.onNearEnd() }
+        }
 
         func page(_ i: Int) -> UIViewController {
             let page = ReelPage(item: parent.items[i], index: i)
@@ -487,14 +515,30 @@ struct ReelPage: View {
 
     private func apply() {
         guard let player else { return }
-        if isActive && !paused && onScreen { player.play() } else { player.pause() }
+        if isActive && !paused && onScreen {
+            // Coming back to a reel that already ended: start it over.
+            if let d = player.currentItem?.duration, d.isNumeric, player.currentTime() >= d - CMTime(seconds: 0.3, preferredTimescale: 600) {
+                player.seek(to: .zero)
+            }
+            player.play()
+        } else {
+            player.pause()
+        }
     }
 
     private func attachLoop(_ p: AVPlayer) {
         guard loopObserver == nil, let current = p.currentItem else { return }
+        let index = self.index
         loopObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: current, queue: .main) { [weak p] _ in
-            p?.seek(to: .zero)
-            p?.play()
+            Task { @MainActor in
+                let cursor = ReelsCursor.shared
+                if AppSettings.shared.reelsAutoNext, cursor.visible, cursor.index == index {
+                    cursor.advance &+= 1
+                } else {
+                    p?.seek(to: .zero)
+                    p?.play()
+                }
+            }
         }
     }
 
