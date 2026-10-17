@@ -14,6 +14,7 @@ import '../ui/media_widgets.dart';
 import '../ui/remote_image.dart';
 import '../ui/router.dart';
 import '../ui/theme.dart';
+import 'forums.dart';
 import 'library.dart';
 import 'settings.dart';
 import 'site_detail.dart';
@@ -72,11 +73,11 @@ class _HomeViewState extends State<HomeView> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([FeedEngine.shared, SiteStore.shared, Library.shared.favoritesVersion, AppSettings.shared]),
+    listenable: Listenable.merge([FeedEngine.shared, SiteStore.shared, Library.shared.favoritesVersion, AppSettings.shared, ForumStore.shared]),
     builder: (context, _) {
       final engine = FeedEngine.shared;
-      final enabled = SiteStore.shared.enabledSites;
-      var items = engine.mixedFeed(enabled);
+      final enabled = _homeSites;
+      var items = engine.mixedFeed(enabled).where((e) => !e.isFromForum).toList();
       if (AppSettings.shared.hideSeen) items = items.where((e) => !Library.shared.isSeen(e)).toList();
       if (_filter != null) items = items.where((e) => e.kind == _filter).toList();
       final slivers = <Widget>[SliverToBoxAdapter(child: SafeArea(bottom: false, child: _header(context)))];
@@ -121,10 +122,11 @@ class _HomeViewState extends State<HomeView> {
           ),
         );
       } else {
+        final picks = AppSettings.shared.smartMix ? Taste.shared.picks(items) : const <MediaItem>[];
         if (items.isNotEmpty) {
           slivers.add(
             SliverToBoxAdapter(
-              child: HeroCarousel(key: ValueKey(_filter), items: items.take(8).toList()),
+              child: HeroCarousel(key: ValueKey(_filter), items: (picks.isEmpty ? items : picks).take(8).toList()),
             ),
           );
         }
@@ -134,6 +136,9 @@ class _HomeViewState extends State<HomeView> {
             child: KindFilterBar(filter: _filter, onChanged: (k) => AppRouter.shared.homeFilter.value = k),
           ),
         );
+        if (picks.length >= 4) {
+          slivers.add(SliverToBoxAdapter(child: PickedRow(items: picks)));
+        }
         if (_filter == null || _filter == MediaKind.video) {
           slivers.add(const SliverToBoxAdapter(child: ContinueWatchingRow()));
         }
@@ -206,9 +211,15 @@ class _HomeViewState extends State<HomeView> {
     },
   );
 
+  /// Forums stay in their own section: a forum added as a site is left off Home too.
+  List<Site> get _homeSites {
+    final forumHosts = ForumStore.shared.forums.map((f) => f.url.host.replaceFirst('www.', '')).toSet();
+    return SiteStore.shared.enabledSites.where((s) => !forumHosts.contains(s.host)).toList();
+  }
+
   /// Opens everything Home shows in random order.
   void _shuffle() {
-    var items = FeedEngine.shared.mixedFeed(SiteStore.shared.enabledSites).where((e) => !e.isListing).toList();
+    var items = FeedEngine.shared.mixedFeed(_homeSites).where((e) => !e.isListing && !e.isFromForum).toList();
     if (AppSettings.shared.hideSeen) items = items.where((e) => !Library.shared.isSeen(e)).toList();
     final f = _filter;
     if (f != null) items = items.where((e) => e.kind == f).toList();
@@ -229,8 +240,8 @@ class _HomeViewState extends State<HomeView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(_greeting.toUpperCase(), style: T.mono(11, spacing: 1.2)),
-              const Wordmark(size: 30),
+              Text(_greeting.toUpperCase(), style: T.mono(11, spacing: 1.2), maxLines: 1, overflow: TextOverflow.fade, softWrap: false),
+              const FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Wordmark(size: 30)),
             ],
           ),
         ),
@@ -240,22 +251,67 @@ class _HomeViewState extends State<HomeView> {
             child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2)),
           ),
         if (LockManager.shared.hasLock) ...[_circle(Icons.lock_rounded, LockManager.shared.lockNow), const SizedBox(width: 6)],
-        _circle(AppSettings.shared.privateMode ? Icons.visibility_off_rounded : Icons.visibility_rounded, () {
-          final on = !AppSettings.shared.privateMode;
-          AppSettings.shared.privateMode = on;
-          HapticFeedback.lightImpact();
-          DownloadManager.shared.show(on ? 'Private mode on: nothing is remembered' : 'Private mode off');
-        }, active: AppSettings.shared.privateMode),
-        const SizedBox(width: 6),
+        if (AppSettings.shared.privateMode) ...[
+          _circle(Icons.visibility_off_rounded, _togglePrivate, active: true),
+          const SizedBox(width: 6),
+        ],
         _circle(Icons.shuffle_rounded, _shuffle),
         const SizedBox(width: 6),
-        _circle(Icons.history_rounded, () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const HistoryView()))),
-        const SizedBox(width: 6),
-        _circle(Icons.add_rounded, () => _add(context)),
-        const SizedBox(width: 6),
-        _circle(Icons.settings_rounded, () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsView()))),
+        // The rest sits in one menu, so the logo always keeps its line.
+        PopupMenuButton<int>(
+          tooltip: 'More',
+          color: T.navy,
+          position: PopupMenuPosition.under,
+          onSelected: (v) {
+            final nav = Navigator.of(context);
+            switch (v) {
+              case 0:
+                _add(context);
+              case 1:
+                nav.push(MaterialPageRoute<void>(builder: (_) => const HistoryView()));
+              case 2:
+                _togglePrivate();
+              case 3:
+                nav.push(MaterialPageRoute<void>(builder: (_) => const SettingsView()));
+            }
+          },
+          itemBuilder: (_) => [
+            _menuItem(0, Icons.add_rounded, 'Add site'),
+            _menuItem(1, Icons.history_rounded, 'History'),
+            _menuItem(2, AppSettings.shared.privateMode ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                AppSettings.shared.privateMode ? 'Turn off private mode' : 'Private mode'),
+            const PopupMenuDivider(),
+            _menuItem(3, Icons.settings_rounded, 'Settings'),
+          ],
+          child: _circleIcon(Icons.more_horiz_rounded),
+        ),
       ],
     ),
+  );
+
+  PopupMenuItem<int> _menuItem(int v, IconData icon, String label) => PopupMenuItem<int>(
+    value: v,
+    child: Row(
+      children: [
+        Icon(icon, size: 20, color: T.ink),
+        const SizedBox(width: 12),
+        Text(label, style: T.text(15, color: T.ink)),
+      ],
+    ),
+  );
+
+  void _togglePrivate() {
+    final on = !AppSettings.shared.privateMode;
+    AppSettings.shared.privateMode = on;
+    HapticFeedback.lightImpact();
+    DownloadManager.shared.show(on ? 'Private mode on: nothing is remembered' : 'Private mode off');
+  }
+
+  Widget _circleIcon(IconData icon) => Container(
+    width: 38,
+    height: 38,
+    decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.06), border: Border.all(color: T.line2)),
+    child: Icon(icon, size: 20, color: T.ink),
   );
 
   Widget _circle(IconData icon, VoidCallback onTap, {bool active = false}) => Pressable(
@@ -499,7 +555,7 @@ class ContinueWatchingRow extends StatelessWidget {
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: ResumeStore.shared,
     builder: (context, _) {
-      final points = ResumeStore.shared.continueWatching.take(20).toList();
+      final points = ResumeStore.shared.continueWatching.where((p) => !p.item.isFromForum).take(20).toList();
       if (points.isEmpty) return const SizedBox.shrink();
       final items = points.map((e) => e.item).toList();
       return Padding(
@@ -583,7 +639,7 @@ class WatchLaterRow extends StatelessWidget {
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: WatchLater.shared,
     builder: (context, _) {
-      final all = WatchLater.shared.items;
+      final all = WatchLater.shared.items.where((e) => !e.isFromForum).toList();
       if (all.isEmpty) return const SizedBox.shrink();
       final items = all.take(20).toList();
       return Padding(
@@ -621,5 +677,47 @@ class WatchLaterRow extends StatelessWidget {
         ),
       );
     },
+  );
+}
+
+/// What matches your taste best, learned from what you open, save and watch to the end.
+class PickedRow extends StatelessWidget {
+  final List<MediaItem> items;
+  const PickedRow({super.key, required this.items});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 22),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: SectionHeader(title: 'Picked for you', subtitle: 'Based on what you watch and save'),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 198,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            itemCount: items.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 12),
+            itemBuilder: (context, i) {
+              final item = items[i];
+              final a = item.kind == MediaKind.video ? 16 / 11 : 4 / 5;
+              return Pressable(
+                onTap: () => AppRouter.shared.open(items, i),
+                onLongPress: () => showMediaActions(context, item),
+                child: GestureDetector(
+                  onSecondaryTap: () => showMediaActions(context, item),
+                  child: SizedBox(width: 190 * a, height: 190, child: MediaCard(item: item, aspect: a)),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    ),
   );
 }

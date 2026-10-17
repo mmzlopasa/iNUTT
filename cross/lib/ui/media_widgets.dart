@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -51,7 +54,12 @@ class MediaCard extends StatelessWidget {
   const MediaCard({super.key, required this.item, this.aspect = 4 / 5});
 
   @override
-  Widget build(BuildContext context) => AspectRatio(
+  Widget build(BuildContext context) {
+    final card = _card();
+    return Platform.isWindows && item.kind == MediaKind.video ? HoverPreview(item: item, child: card) : card;
+  }
+
+  Widget _card() => AspectRatio(
     aspectRatio: aspect,
     child: Container(
       decoration: BoxDecoration(
@@ -114,6 +122,98 @@ class MediaCard extends StatelessWidget {
   );
 }
 
+/// Set by the app: opens items in a second window (Windows).
+Future<void> Function(List<MediaItem> items, int index)? openInNewWindow;
+
+/// Windows: resting the mouse on a video card plays it silently inside the card.
+class HoverPreview extends StatefulWidget {
+  final MediaItem item;
+  final Widget child;
+  const HoverPreview({super.key, required this.item, required this.child});
+
+  @override
+  State<HoverPreview> createState() => _HoverPreviewState();
+}
+
+class _HoverPreviewState extends State<HoverPreview> {
+  /// Only one card plays at a time.
+  static _HoverPreviewState? _playing;
+  Timer? _wait;
+  Player? _player;
+  VideoController? _video;
+  bool _ready = false;
+
+  void _enter() {
+    _wait?.cancel();
+    _wait = Timer(const Duration(milliseconds: 450), _start);
+  }
+
+  Future<void> _start() async {
+    final r = await FeedEngine.shared.resolve(widget.item);
+    if (!mounted || _wait == null || r == null || r.kind != MediaKind.video) return;
+    if (_playing != this) _playing?._stop();
+    _playing = this;
+    final p = Player();
+    final v = VideoController(p);
+    await p.setVolume(0);
+    await p.setPlaylistMode(PlaylistMode.single);
+    final at = ResumeStore.shared.position(widget.item.id);
+    await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer, r.url), start: at), play: true);
+    if (!mounted || _playing != this) {
+      await p.dispose();
+      return;
+    }
+    _player = p;
+    _video = v;
+    p.stream.width.firstWhere((w) => (w ?? 0) > 0).then((_) {
+      if (mounted && _player == p) setState(() => _ready = true);
+    }).ignore();
+    setState(() {});
+  }
+
+  void _stop() {
+    _wait?.cancel();
+    _wait = null;
+    final p = _player;
+    _player = null;
+    _video = null;
+    _ready = false;
+    if (_playing == this) _playing = null;
+    p?.dispose();
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    onEnter: (_) => _enter(),
+    onExit: (_) => _stop(),
+    child: Stack(
+      children: [
+        widget.child,
+        if (_video != null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: _ready ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Video(controller: _video!, fit: BoxFit.cover, controls: NoVideoControls, fill: Colors.black),
+                ),
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
 /// Long-press / right-click: a silent preview of the video (or the picture larger) above the actions.
 void showMediaActions(BuildContext context, MediaItem item, {List<Widget> extra = const []}) {
   HapticFeedback.mediumImpact();
@@ -161,6 +261,7 @@ void showMediaActions(BuildContext context, MediaItem item, {List<Widget> extra 
               DownloadManager.shared.show(on ? 'Added to Watch later' : 'Removed from Watch later');
             }),
             tile(Icons.download_rounded, 'Download', () => DownloadManager.shared.download(item)),
+            if (Platform.isWindows && !Disk.readOnly) tile(Icons.open_in_new_rounded, 'Open in new window', () => openInNewWindow?.call([item], 0)),
             ...extra,
             for (final c in CollectionStore.shared.collections)
               tile(

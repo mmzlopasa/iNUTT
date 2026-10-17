@@ -367,7 +367,7 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
             MediaItem(
               // The forum page is sent as referer, so image hosts that block hot-linking still answer.
               id: hashKey(key),
-              siteId: 'forum',
+              siteId: MediaItem.forumSiteId,
               siteName: widget.title,
               title: d['n'] as String? ?? '',
               thumbnailUrl: thumb,

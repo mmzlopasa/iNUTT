@@ -130,8 +130,21 @@ class FeedEngine extends ChangeNotifier {
         if (i < l.length && !l[i].isListing && seen.add(l[i].id)) out.add(l[i]);
       }
     }
-    _mixedCache = (_version, key, out);
-    return out;
+    final unique = dedupe(out);
+    _mixedCache = (_version, key, unique);
+    return unique;
+  }
+
+  /// Keeps the first of items that are the same picture or video on different sites.
+  static List<MediaItem> dedupe(List<MediaItem> items) {
+    if (!AppSettings.shared.hideDuplicates) return items;
+    final seen = <String>{};
+    return items.where((i) {
+      final keys = i.duplicateKeys;
+      if (keys.any(seen.contains)) return false;
+      seen.addAll(keys);
+      return true;
+    }).toList();
   }
 
   List<MediaItem> allCachedItems() {
@@ -638,7 +651,7 @@ class FeedEngine extends ChangeNotifier {
         if (i < l.length) out.add(l[i]);
       }
     }
-    return out;
+    return dedupe(out);
   }
 
   static Future<List<MediaItem>> search(String q, Site site) async {

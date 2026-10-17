@@ -30,13 +30,13 @@ class _SearchViewState extends State<SearchView> {
     if (q.isEmpty) return [];
     final seen = <String>{};
     final pool = [...FeedEngine.shared.allCachedItems(), ...Library.shared.favorites, ...Library.shared.history.map((e) => e.item)];
-    return pool.where((i) {
+    return FeedEngine.dedupe(pool.where((i) {
       if (!seen.add(i.id) || i.isListing) return false;
       if (_filter != null && i.kind != _filter) return false;
       return i.title.toLowerCase().contains(q) ||
           i.siteName.toLowerCase().contains(q) ||
           (i.categoryName?.toLowerCase().contains(q) ?? false);
-    }).toList();
+    }).toList());
   }
 
   List<(Site, SiteCategory)> get _categories {

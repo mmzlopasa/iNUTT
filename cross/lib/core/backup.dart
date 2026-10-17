@@ -9,7 +9,11 @@ import 'stores.dart';
 /// One file with your sites, forums, favorites, collections and blocked words. The same format is
 /// used on iOS, Android and Windows, so a backup from one restores on the others.
 class Backup {
-  static Map<String, dynamic> _pack(MediaItem i) => {
+  static Map<String, dynamic> _pack(MediaItem i) => pack(i);
+
+  /// Sync keeps the id, so the same item is recognised on every device.
+  static Map<String, dynamic> pack(MediaItem i, {bool withId = false}) => {
+    if (withId) 'id': i.id,
     'title': i.title,
     'siteName': i.siteName,
     'thumbnailUrl': ?i.thumbnailUrl?.toString(),
@@ -20,15 +24,20 @@ class Backup {
     'categoryName': ?i.categoryName,
   };
 
-  static MediaItem? _unpack(Object? raw) {
+  static MediaItem? _unpack(Object? raw) => unpack(raw);
+
+  static MediaItem? unpack(Object? raw) {
     if (raw is! Map) return null;
     Uri? u(String k) => raw[k] is String ? Uri.tryParse(raw[k] as String) : null;
     final thumb = u('thumbnailUrl'), media = u('mediaUrl'), page = u('pageUrl');
     if (thumb == null && media == null && page == null) return null;
     final siteName = raw['siteName'] as String? ?? '';
     final site = SiteStore.shared.sites.where((s) => s.name == siteName).firstOrNull;
+    final forum = site == null && ForumStore.shared.forums.any((f) => f.name == siteName);
+    final id = raw['id'] is String && (raw['id'] as String).isNotEmpty ? raw['id'] as String : null;
     return MediaItem(
-      siteId: site?.id ?? 'backup',
+      id: id,
+      siteId: site?.id ?? (forum ? MediaItem.forumSiteId : 'backup'),
       siteName: siteName,
       title: raw['title'] as String? ?? '',
       thumbnailUrl: thumb,

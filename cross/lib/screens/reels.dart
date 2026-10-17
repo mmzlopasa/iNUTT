@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/downloads.dart';
+import '../core/extras.dart';
 import '../core/feed_engine.dart';
 import '../core/models.dart';
 import '../core/net.dart';
@@ -344,8 +345,10 @@ class _ReelsViewState extends State<ReelsView> {
                 HapticFeedback.selectionClick();
                 setState(() => _index = i);
                 if (i >= store.items.length - 4) unawaited(store.loadMore());
-                // The next page is already built; find the one after it too.
-                if (i + 2 < store.items.length) unawaited(FeedEngine.shared.resolve(store.items[i + 2]));
+                // The next page is already built and buffering; find the next few after it too.
+                for (final j in [i + 2, i + 3]) {
+                  if (j < store.items.length) unawaited(FeedEngine.shared.resolve(store.items[j]));
+                }
               },
               itemBuilder: (context, i) => ReelPage(
                 key: ValueKey(store.items[i].id),
@@ -575,6 +578,7 @@ class _ReelPageState extends State<ReelPage> {
     }
     final p = Player(configuration: const PlayerConfiguration(bufferSize: 16 * 1024 * 1024));
     final v = VideoController(p);
+    await bufferAhead(p);
     _watch(p);
     final autoNext = AppSettings.shared.reelsAutoNext;
     if (autoNext) {
@@ -682,11 +686,14 @@ class _ReelPageState extends State<ReelPage> {
                 ),
               ),
               child: Padding(
-                padding: EdgeInsets.fromLTRB(16, 80, 16, MediaQuery.paddingOf(context).bottom + 96),
+                // Starts above the floating tab bar, whatever the phone's own bottom inset is.
+                padding: EdgeInsets.fromLTRB(16, 80, 16, MediaQuery.paddingOf(context).bottom + 100),
                 child: ListenableBuilder(
                   listenable: Library.shared,
                   builder: (context, _) {
                     final fav = Library.shared.isFavorite(item);
+                    final tags = item.hashtags;
+                    final title = tags.isEmpty ? item.title : item.titleWithoutTags;
                     return Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
@@ -696,13 +703,34 @@ class _ReelPageState extends State<ReelPage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(item.siteName.toUpperCase(), style: T.mono(10, color: T.gold, spacing: 1)),
-                              if (item.title.isNotEmpty) ...[
+                              if (title.isNotEmpty) ...[
                                 const SizedBox(height: 6),
                                 Text(
-                                  item.title,
+                                  title,
                                   maxLines: 3,
                                   overflow: TextOverflow.ellipsis,
                                   style: T.text(15, weight: FontWeight.w500, color: Colors.white),
+                                ),
+                              ],
+                              if (tags.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                // One line that scrolls sideways when there are many.
+                                SizedBox(
+                                  height: 26,
+                                  child: ListView.separated(
+                                    scrollDirection: Axis.horizontal,
+                                    itemCount: tags.length.clamp(0, 20),
+                                    separatorBuilder: (_, _) => const SizedBox(width: 6),
+                                    itemBuilder: (_, i) => Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 9),
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(alpha: 0.16),
+                                        borderRadius: BorderRadius.circular(13),
+                                      ),
+                                      child: Text('#${tags[i]}', style: T.text(13, weight: FontWeight.w600, color: Colors.white)),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ],

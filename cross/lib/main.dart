@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show PointerDeviceKind;
@@ -16,6 +17,7 @@ import 'core/image_cache.dart';
 import 'core/models.dart';
 import 'core/security.dart';
 import 'core/stores.dart';
+import 'core/sync.dart';
 import 'core/vault.dart';
 import 'screens/home.dart';
 import 'screens/library.dart';
@@ -24,14 +26,26 @@ import 'screens/onboarding.dart';
 import 'screens/reels.dart';
 import 'screens/search.dart';
 import 'screens/sites.dart';
+import 'screens/viewer.dart';
 import 'ui/media_widgets.dart';
 import 'ui/router.dart';
 import 'ui/theme.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   await Disk.init();
+  // Windows "Open in new window": a second copy of the app that only shows the viewer.
+  List<MediaItem>? windowItems;
+  final w = args.indexOf('--window');
+  if (Platform.isWindows && w >= 0 && w + 1 < args.length) {
+    try {
+      final f = File(args[w + 1]);
+      windowItems = (jsonDecode(f.readAsStringSync()) as List).map((e) => MediaItem.fromJson(e as Map<String, dynamic>)).toList();
+      f.deleteSync();
+      Disk.readOnly = true;
+    } catch (_) {}
+  }
   await AppSettings.shared.load();
   await ImagePipeline.shared.init();
   // Room for a few screens of decoded thumbnails, so scrolling back never decodes again.
@@ -44,6 +58,8 @@ Future<void> main() async {
   Vault.shared.load();
   ResumeStore.shared.load();
   WatchLater.shared.load();
+  Taste.shared.load();
+  await SyncManager.shared.load();
   CookieJar.load();
   OfflineStore.shared.load();
   if (Platform.isWindows) await windowManager.ensureInitialized();
@@ -58,11 +74,18 @@ Future<void> main() async {
       statusBarIconBrightness: Brightness.light,
     ),
   );
-  runApp(const INuttApp());
+  WindowInbox.start();
+  openInNewWindow = WindowViewer.open;
+  if (windowItems != null) {
+    await windowManager.setTitle('iNUTT');
+    await windowManager.setSize(const Size(900, 1000));
+  }
+  runApp(INuttApp(windowItems: windowItems));
 }
 
 class INuttApp extends StatelessWidget {
-  const INuttApp({super.key});
+  final List<MediaItem>? windowItems;
+  const INuttApp({super.key, this.windowItems});
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -73,7 +96,7 @@ class INuttApp extends StatelessWidget {
     scrollBehavior: const _Scroll(),
     // Lock, privacy cover, onboarding and toasts sit above every route, the viewer included.
     builder: (context, child) => AppShell(child: child ?? const SizedBox.shrink()),
-    home: const RootView(),
+    home: windowItems == null ? const RootView() : WindowViewer(items: windowItems!),
   );
 }
 
@@ -98,6 +121,7 @@ class _RootViewState extends State<RootView> {
     if (FeedEngine.shared.isStale) unawaited(FeedEngine.shared.refreshAll());
     DownloadManager.shared.resumeQueue();
     unawaited(NewContentWatcher.start());
+    SyncManager.shared.syncIfNeeded();
   }
 
   Widget _tab(AppTab t, Widget root) => Navigator(
@@ -213,9 +237,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       LockManager.shared.lockIfNeeded();
       Vault.shared.closeOpenFiles();
       FeedEngine.shared.saveNow();
+      // Changes made just now reach your other devices.
+      if (state == AppLifecycleState.paused) unawaited(SyncManager.shared.sync());
     } else if (state == AppLifecycleState.resumed) {
       if (FeedEngine.shared.isStale) unawaited(FeedEngine.shared.refreshAll());
       OfflineStore.shared.sync();
+      SyncManager.shared.syncIfNeeded();
     }
   }
 
@@ -452,4 +479,41 @@ class FloatingTabBar extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// The only screen of a second window: the viewer, and closing it closes the window.
+class WindowViewer extends StatefulWidget {
+  final List<MediaItem> items;
+  const WindowViewer({super.key, required this.items});
+
+  /// Opens the items in a new window of their own, next to this one.
+  static Future<void> open(List<MediaItem> items, int index) async {
+    final ordered = [...items.skip(index), ...items.take(index)].take(200).toList();
+    final f = File('${Directory.systemTemp.path}${Platform.pathSeparator}inutt-window-${DateTime.now().microsecondsSinceEpoch}.json');
+    await f.writeAsString(jsonEncode(ordered.map((e) => e.toJson()).toList()));
+    await Process.start(Platform.resolvedExecutable, ['--window', f.path], mode: ProcessStartMode.detached);
+  }
+
+  @override
+  State<WindowViewer> createState() => _WindowViewerState();
+}
+
+class _WindowViewerState extends State<WindowViewer> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await AppRouter.shared.rootKey.currentState?.push(
+        PageRouteBuilder<void>(
+          opaque: false,
+          pageBuilder: (_, _, _) => MediaViewer(items: widget.items, startIndex: 0),
+        ),
+      );
+      await windowManager.close();
+      exit(0);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(color: Colors.black);
 }

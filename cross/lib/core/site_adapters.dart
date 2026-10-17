@@ -254,12 +254,30 @@ class SiteAdapters {
           mediaUrl: v,
           pageUrl: Uri.parse('https://fikfap.com/'),
           kind: MediaKind.video,
+          tags: _nonEmpty(fikfapTags(p)),
         ),
       );
     }
     if (result.items.isEmpty) throw NetException('The page is empty.');
     if (lastId != null) result.nextPage = site.url.replace(queryParameters: {'inuttAfter': lastId});
     return result;
+  }
+
+  static List<String>? _nonEmpty(List<String> l) => l.isEmpty ? null : l;
+
+  /// A post's hashtags, as a list of names or of objects with a label or name.
+  static List<String> fikfapTags(Map p) {
+    final raw = (p['hashtags'] ?? p['tags'] ?? p['hashTags']) as List? ?? const [];
+    return raw
+        .map((t) {
+          if (t is String) return t;
+          if (t is Map) return (t['label'] ?? t['name'] ?? t['tag'] ?? t['hashtag'])?.toString();
+          return null;
+        })
+        .whereType<String>()
+        .map((s) => s.replaceAll(RegExp(r'^[#\s]+|[#\s]+$'), ''))
+        .where((s) => s.isNotEmpty)
+        .toList();
   }
 
   // VSCO

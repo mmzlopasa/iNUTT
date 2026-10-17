@@ -296,6 +296,8 @@ class Wordmark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text.rich(
+    maxLines: 1,
+    softWrap: false,
     TextSpan(
       children: [
         TextSpan(text: 'iNUTT', style: T.display(size)),

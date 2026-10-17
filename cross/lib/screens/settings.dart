@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,6 +15,7 @@ import '../core/image_cache.dart';
 import '../core/models.dart';
 import '../core/security.dart';
 import '../core/stores.dart';
+import '../core/sync.dart';
 import '../ui/theme.dart';
 import 'library.dart';
 import 'lock.dart';
@@ -257,6 +259,39 @@ class _SettingsViewState extends State<SettingsView> {
                   ),
                 ],
               ),
+            Section(
+              title: 'Home',
+              footer:
+                  'Picked for you learns from what you open, save, download and watch to the end, and shows the best matches first. '
+                  'Nothing is learned in private mode. Hide duplicates shows the same picture or video only once when several sites '
+                  'have it. Forums are never shown on Home.',
+              children: [
+                SwitchRow(icon: Icons.auto_awesome_rounded, title: 'Picked for you', value: s.smartMix, onChanged: (v) => s.smartMix = v),
+                Row2(
+                  icon: Icons.restart_alt_rounded,
+                  title: 'Forget what I like',
+                  tint: T.err,
+                  onTap: s.smartMix ? Taste.shared.reset : null,
+                ),
+                SwitchRow(
+                  icon: Icons.filter_none_rounded,
+                  title: 'Hide duplicates',
+                  value: s.hideDuplicates,
+                  onChanged: (v) => s.hideDuplicates = v,
+                ),
+              ],
+            ),
+            Section(
+              title: 'Sync',
+              children: [
+                Row2(
+                  icon: Icons.cloud_sync_rounded,
+                  title: 'Sync between devices',
+                  value: SyncManager.shared.isConfigured ? 'On' : 'Off',
+                  onTap: () => _push(const SyncSettingsView()),
+                ),
+              ],
+            ),
             Section(
               title: 'Playback',
               children: [
@@ -535,6 +570,121 @@ class _BlockedWordsViewState extends State<BlockedWordsView> {
                   onPressed: () => AppSettings.shared.blockedWords = words.where((e) => e != w).toList(),
                 ),
               ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// Where the sync file is kept, and the passphrase that encrypts it.
+class SyncSettingsView extends StatefulWidget {
+  const SyncSettingsView({super.key});
+
+  @override
+  State<SyncSettingsView> createState() => _SyncSettingsViewState();
+}
+
+class _SyncSettingsViewState extends State<SyncSettingsView> {
+  final _pass = TextEditingController();
+
+  @override
+  void dispose() {
+    _pass.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickWindows() async {
+    final dir = await FilePicker.getDirectoryPath(dialogTitle: 'Folder for the sync file (e.g. in Google Drive or OneDrive)');
+    if (dir == null) return;
+    SyncManager.shared.setFolder(dir);
+    unawaited(SyncManager.shared.sync());
+  }
+
+  Future<void> _pickAndroid(bool create) async {
+    try {
+      if (await SyncManager.shared.pickAndroid(create: create)) unawaited(SyncManager.shared.sync());
+    } catch (_) {
+      DownloadManager.shared.show('That file can\'t be used for sync');
+    }
+  }
+
+  Future<void> _savePass() async {
+    if (_pass.text.trim().length < 6) return;
+    await SyncManager.shared.setPassphrase(_pass.text);
+    _pass.clear();
+    unawaited(SyncManager.shared.sync());
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: SyncManager.shared,
+    builder: (context, _) {
+      final m = SyncManager.shared;
+      final last = m.lastSync;
+      return SkyScaffold(
+        appBar: AppBar(title: const Text('Sync between devices')),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Section(
+              title: 'Where',
+              footer: Platform.isAndroid
+                  ? 'On your first device choose "New sync file" and save it in Google Drive (or another cloud app). On your other devices '
+                        'choose "Use existing file" and pick that same file. On iPhone pick the folder it is in; on Windows the synced folder.'
+                  : 'Pick a folder that your cloud keeps in sync, for example inside Google Drive, OneDrive or iCloud Drive for Windows. '
+                        'On your other devices pick the same file or folder.',
+              children: [
+                if (Platform.isAndroid) ...[
+                  Row2(icon: Icons.note_add_rounded, title: 'New sync file', onTap: () => _pickAndroid(true)),
+                  Row2(icon: Icons.file_open_rounded, title: 'Use existing file', onTap: () => _pickAndroid(false)),
+                ] else
+                  Row2(icon: Icons.folder_rounded, title: 'Sync folder', value: m.locationName ?? 'Choose…', onTap: _pickWindows),
+                if (Platform.isAndroid && m.locationName != null)
+                  Row2(icon: Icons.insert_drive_file_rounded, title: 'Using', value: m.locationName),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Section(
+              title: 'Passphrase',
+              footer:
+                  'Favorites, collections and Watch later are merged; removing something removes it everywhere. The file is encrypted '
+                  'with this passphrase (at least 6 characters), which must be the same on every device and is never uploaded.',
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _pass,
+                          obscureText: true,
+                          style: T.text(15, color: T.ink),
+                          decoration: InputDecoration(hintText: m.hasPassphrase ? 'Passphrase is set' : 'Sync passphrase'),
+                          onSubmitted: (_) => _savePass(),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      GoldButton(label: 'Save', onPressed: _savePass),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Section(
+              title: 'Status',
+              footer: m.status,
+              children: [
+                Row2(
+                  icon: Icons.sync_rounded,
+                  title: m.syncing ? 'Syncing…' : 'Sync now',
+                  value: last == null ? 'Never' : '${last.hour.toString().padLeft(2, '0')}:${last.minute.toString().padLeft(2, '0')}',
+                  onTap: m.isConfigured && !m.syncing ? m.sync : null,
+                ),
+                if (m.location != null) Row2(icon: Icons.cloud_off_rounded, title: 'Stop syncing', tint: T.err, onTap: m.stop),
+              ],
+            ),
           ],
         ),
       );

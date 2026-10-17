@@ -36,7 +36,12 @@ class Disk {
 
   /// Saves one file at a time per name, each through its own temporary file, so quick
   /// successive saves can never interleave and leave a broken file behind.
+  /// A second window (Windows "Open in new window") never writes the stores; its changes go to
+  /// the main window through [WindowInbox] instead, so the two never overwrite each other.
+  static bool readOnly = false;
+
   static Future<void> save(String name, Object value) {
+    if (readOnly) return Future<void>.value();
     // Encoding a large feed takes long enough to drop frames, so it runs in its own isolate.
     final encoded = _encode(value);
     final prev = _pending[name] ?? Future<void>.value();
@@ -159,6 +164,19 @@ class Library extends ChangeNotifier {
 
   bool isFavorite(MediaItem i) => _favIds.contains(i.id);
 
+  /// Used by sync: the list as merged with your other devices.
+  void replaceFavorites(List<MediaItem> items) {
+    if (_sameIds(items, favorites)) return;
+    favorites = items;
+    _favIds
+      ..clear()
+      ..addAll(items.map((e) => e.id));
+    favoritesVersion.value++;
+    notifyListeners();
+    Disk.save('favorites.json', favorites.map((e) => e.toJson()).toList());
+    if (AppSettings.shared.offlineFavorites) OfflineStore.shared.sync();
+  }
+
   /// Used by backup restore. Returns how many were new.
   int mergeFavorites(List<MediaItem> items) {
     final fresh = items.where((e) => !_favIds.contains(e.id)).toList();
@@ -177,11 +195,13 @@ class Library extends ChangeNotifier {
     } else {
       _favIds.add(item.id);
       favorites.insert(0, item);
+      Taste.shared.learn(item, TasteSignal.favorite);
     }
     favoritesVersion.value++;
     notifyListeners();
     Disk.save('favorites.json', favorites.map((e) => e.toJson()).toList());
     if (AppSettings.shared.offlineFavorites) OfflineStore.shared.sync();
+    if (Disk.readOnly) WindowInbox.send({'t': 'fav', 'on': isFavorite(item), 'item': item.toJson()});
   }
 
   /// While the viewer or Reels is open, screens underneath are not redrawn for every swipe;
@@ -210,6 +230,7 @@ class Library extends ChangeNotifier {
     if (!AppSettings.shared.historyEnabled || AppSettings.shared.privateMode || item.isListing) return;
     history.removeWhere((e) => e.item.id == item.id);
     history.insert(0, HistoryEntry(item: item, viewedAt: DateTime.now()));
+    Taste.shared.learn(item, TasteSignal.open);
     final firstTime = _seenIds.add(item.id);
     if (history.length > Limits.maxHistory) history = history.sublist(0, Limits.maxHistory);
     // Saving 2000 entries on every swipe is wasted work; once things settle is enough.
@@ -317,6 +338,7 @@ class CollectionStore extends ChangeNotifier {
       c.items.insert(0, item);
     }
     _save();
+    if (Disk.readOnly) WindowInbox.send({'t': 'col', 'id': id, 'on': !had, 'item': item.toJson()});
     return !had;
   }
 
@@ -330,6 +352,15 @@ class CollectionStore extends ChangeNotifier {
 
   void delete(String id) {
     collections.removeWhere((c) => c.id == id);
+    _save();
+  }
+
+  /// Used by sync: the collections as merged with your other devices.
+  void replaceAll(List<MediaCollection> list) {
+    final same = list.length == collections.length &&
+        Iterable<int>.generate(list.length).every((i) => list[i].name == collections[i].name && _sameIds(list[i].items, collections[i].items));
+    if (same) return;
+    collections = list;
     _save();
   }
 
@@ -435,6 +466,17 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The same picture or video from several sites is shown once.
+  bool get hideDuplicates => _b('hideDuplicates', true);
+  set hideDuplicates(bool v) {
+    _sb('hideDuplicates', v);
+    blocklistVersion.value++;
+  }
+
+  /// Home puts what matches your taste first, in a "Picked for you" row.
+  bool get smartMix => _b('smartMix', true);
+  set smartMix(bool v) => _sb('smartMix', v);
+
   bool get notifyNew => _b('notifyNew', false);
   set notifyNew(bool v) => _sb('notifyNew', v);
 
@@ -486,5 +528,59 @@ class AppSettings extends ChangeNotifier {
     final t = q.trim();
     if (t.isEmpty || privateMode) return;
     recentSearches = [t, ...recentSearches.where((e) => e.toLowerCase() != t.toLowerCase())].take(15).toList();
+  }
+}
+
+bool _sameIds(List<MediaItem> a, List<MediaItem> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].id != b[i].id) return false;
+  }
+  return true;
+}
+
+/// Windows: changes made in a second window reach the main window through a small file it reads.
+class WindowInbox {
+  static File get _file => File('${Disk.dir.path}${Platform.pathSeparator}inbox.jsonl');
+  static Timer? _timer;
+
+  static void send(Map<String, dynamic> m) {
+    try {
+      _file.writeAsStringSync('${jsonEncode(m)}\n', mode: FileMode.append, flush: true);
+    } catch (_) {}
+  }
+
+  static void start() {
+    if (!Platform.isWindows || Disk.readOnly) return;
+    _timer ??= Timer.periodic(const Duration(seconds: 2), (_) => _drain());
+  }
+
+  static void _drain() {
+    final f = _file;
+    if (!f.existsSync()) return;
+    final List<String> lines;
+    try {
+      final taken = f.renameSync('${f.path}.reading');
+      lines = taken.readAsLinesSync();
+      taken.deleteSync();
+    } catch (_) {
+      return;
+    }
+    for (final l in lines) {
+      try {
+        final m = jsonDecode(l) as Map<String, dynamic>;
+        final item = MediaItem.fromJson(m['item'] as Map<String, dynamic>);
+        final on = m['on'] == true;
+        switch (m['t']) {
+          case 'fav':
+            if (Library.shared.isFavorite(item) != on) Library.shared.toggleFavorite(item);
+          case 'later':
+            if (WatchLater.shared.contains(item) != on) WatchLater.shared.toggle(item);
+          case 'col':
+            final id = m['id'] as String;
+            if (CollectionStore.shared.contains(item, id) != on) CollectionStore.shared.toggle(item, id);
+        }
+      } catch (_) {}
+    }
   }
 }

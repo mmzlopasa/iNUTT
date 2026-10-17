@@ -264,7 +264,7 @@ class _MediaViewerState extends State<MediaViewer> {
 
   /// Resolve and warm the neighbours so swiping feels instant.
   void _preload(int i) {
-    for (final j in [i + 1, i - 1, i + 2]) {
+    for (final j in [i + 1, i - 1, i + 2, i + 3]) {
       if (j < 0 || j >= widget.items.length) continue;
       final item = widget.items[j];
       FeedEngine.shared.resolve(item).then((r) {
@@ -287,9 +287,27 @@ class _MediaViewerState extends State<MediaViewer> {
       autofocus: true,
       onKeyEvent: (e) {
         if (e is! KeyDownEvent) return;
-        if (e.logicalKey == LogicalKeyboardKey.escape) Navigator.pop(context);
-        if (e.logicalKey == LogicalKeyboardKey.arrowRight) _go(1);
-        if (e.logicalKey == LogicalKeyboardKey.arrowLeft) _go(-1);
+        final k = e.logicalKey;
+        if (k == LogicalKeyboardKey.escape) Navigator.pop(context);
+        if (k == LogicalKeyboardKey.arrowRight || k == LogicalKeyboardKey.arrowDown) _go(1);
+        if (k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.arrowUp) _go(-1);
+        // Keyboard shortcuts: F favorite, L Watch later, D download, N new window, Space play or pause, M mute.
+        final item = _current;
+        if (k == LogicalKeyboardKey.keyF) {
+          Library.shared.toggleFavorite(item);
+          DownloadManager.shared.show(Library.shared.isFavorite(item) ? 'Added to favorites' : 'Removed from favorites');
+        }
+        if (k == LogicalKeyboardKey.keyL) {
+          final on = WatchLater.shared.toggle(item);
+          DownloadManager.shared.show(on ? 'Added to Watch later' : 'Removed from Watch later');
+        }
+        if (k == LogicalKeyboardKey.keyD && !DownloadManager.shared.active.contains(item.id)) {
+          DownloadManager.shared.download(item);
+        }
+        if (k == LogicalKeyboardKey.keyN && Platform.isWindows && !Disk.readOnly) openInNewWindow?.call(widget.items, _index);
+        final p = _player;
+        if (p != null && k == LogicalKeyboardKey.space) p.playOrPause();
+        if (p != null && k == LogicalKeyboardKey.keyM) p.setVolume(p.state.volume > 0 ? 0 : 100);
       },
       child: Stack(
         children: [
@@ -602,6 +620,7 @@ class _MediaPageState extends State<MediaPage> {
       final s = AppSettings.shared;
       final p = Player(configuration: const PlayerConfiguration(bufferSize: 32 * 1024 * 1024));
       final v = VideoController(p);
+      await bufferAhead(p);
       await p.setPlaylistMode(s.loopVideos ? PlaylistMode.single : PlaylistMode.none);
       if (s.startMuted) await p.setVolume(0);
       await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer, r.url)), play: false);

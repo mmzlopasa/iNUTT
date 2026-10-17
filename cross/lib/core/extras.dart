@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' show DartPluginRegistrant;
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../screens/forums.dart';
@@ -91,6 +93,7 @@ class ResumeStore extends ChangeNotifier {
   /// Watched to the end: off the Continue watching row and out of Watch later.
   void finished(MediaItem item) {
     WatchLater.shared.remove(item);
+    if (_points.containsKey(item.id)) Taste.shared.learn(item, TasteSignal.finished);
     if (_points.remove(item.id) != null) _changed();
   }
 
@@ -144,12 +147,25 @@ class WatchLater extends ChangeNotifier {
   bool toggle(MediaItem item) {
     if (_ids.contains(item.id)) {
       remove(item);
+      if (Disk.readOnly) WindowInbox.send({'t': 'later', 'on': false, 'item': item.toJson()});
       return false;
     }
     items.insert(0, item);
     _ids.add(item.id);
+    Taste.shared.learn(item, TasteSignal.later);
     _changed(now: true);
+    if (Disk.readOnly) WindowInbox.send({'t': 'later', 'on': true, 'item': item.toJson()});
     return true;
+  }
+
+  /// Used by sync: the queue as merged with your other devices.
+  void replaceAll(List<MediaItem> list) {
+    if (list.length == items.length && Iterable<int>.generate(list.length).every((i) => list[i].id == items[i].id)) return;
+    items = list;
+    _ids
+      ..clear()
+      ..addAll(list.map((e) => e.id));
+    _changed(now: true);
   }
 
   void remove(MediaItem item) => removeIds({item.id});
@@ -534,4 +550,117 @@ void backgroundDispatcher() {
     }
     return true;
   });
+}
+
+// Smart mix
+
+enum TasteSignal {
+  open(1),
+  later(2),
+  finished(3),
+  download(3),
+  favorite(4);
+
+  const TasteSignal(this.weight);
+  final double weight;
+}
+
+/// Learns what you open, save and watch to the end, and scores items by it for "Picked for you" on Home.
+class Taste extends ChangeNotifier {
+  static final Taste shared = Taste._();
+  Taste._();
+
+  Map<String, double> _weights = {};
+  int _signals = 0;
+  Timer? _save;
+
+  void load() {
+    final raw = Disk.load('taste.json');
+    if (raw is Map) {
+      _weights = ((raw['weights'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toDouble()));
+      _signals = (raw['signals'] as num?)?.toInt() ?? 0;
+    }
+  }
+
+  /// Enough has been learned for the picks to mean something.
+  bool get isReady => _signals >= 5;
+
+  static List<String> features(MediaItem item) {
+    final f = ['s:${item.siteId}', 'k:${item.kind.name}'];
+    final c = item.categoryName?.toLowerCase();
+    if (c != null && c.isNotEmpty) f.add('c:$c');
+    final words = item.title
+        .toLowerCase()
+        .split(RegExp(r'[^\p{L}\p{N}]+', unicode: true))
+        .where((w) => w.length >= 4 && !RegExp(r'^\d+$').hasMatch(w))
+        .toSet()
+        .toList()
+      ..sort();
+    f.addAll(words.take(12).map((w) => 'w:$w'));
+    return f;
+  }
+
+  void learn(MediaItem item, TasteSignal signal) {
+    final s = AppSettings.shared;
+    if (!s.smartMix || s.privateMode || item.isFromForum) return;
+    // Older taste fades slowly, so the mix follows what you like now.
+    if (_signals % 50 == 49) {
+      _weights = _weights.map((k, v) => MapEntry(k, v * 0.9))..removeWhere((k, v) => v <= 0.05);
+    }
+    for (final k in features(item)) {
+      _weights[k] = (_weights[k] ?? 0) + signal.weight;
+    }
+    if (_weights.length > 3000) {
+      final top = _weights.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+      _weights = Map.fromEntries(top.take(2500));
+    }
+    _signals++;
+    _save?.cancel();
+    _save = Timer(const Duration(seconds: 3), () => Disk.save('taste.json', {'weights': _weights, 'signals': _signals}));
+  }
+
+  double score(MediaItem item) {
+    var total = 0.0;
+    for (final k in features(item)) {
+      final w = _weights[k];
+      if (w == null) continue;
+      final factor = k.startsWith('s:') ? 0.6 : (k.startsWith('k:') ? 0.3 : 1.0);
+      total += math.log(1 + w) * factor;
+    }
+    return total;
+  }
+
+  /// The best matches among the given items, new ones first.
+  List<MediaItem> picks(List<MediaItem> items, {int limit = 20}) {
+    if (!isReady) return const [];
+    final lib = Library.shared;
+    final scored = <(MediaItem, double)>[];
+    for (final i in items.take(1500)) {
+      final s = score(i) * (lib.isSeen(i) ? 0.4 : 1);
+      if (s > 0) scored.add((i, s));
+    }
+    scored.sort((a, b) => b.$2.compareTo(a.$2));
+    return scored.take(limit).map((e) => e.$1).toList();
+  }
+
+  void reset() {
+    _weights = {};
+    _signals = 0;
+    Disk.save('taste.json', {'weights': <String, double>{}, 'signals': 0});
+    notifyListeners();
+  }
+}
+
+// Video without waiting
+
+/// The next video opens paused on the page after yours; this makes its player keep downloading
+/// ahead while paused, so it starts the moment you swipe to it, like TikTok.
+Future<void> bufferAhead(Player p) async {
+  final native = p.platform;
+  if (native is! NativePlayer) return;
+  try {
+    await native.setProperty('cache', 'yes');
+    await native.setProperty('cache-pause-initial', 'no');
+    await native.setProperty('demuxer-readahead-secs', '20');
+  } catch (_) {}
 }

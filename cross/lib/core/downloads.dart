@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'extras.dart';
 import 'feed_engine.dart';
 import 'models.dart';
 import 'net.dart';
@@ -47,6 +48,7 @@ class DownloadManager extends ChangeNotifier {
   }
 
   Future<void> download(MediaItem item) async {
+    Taste.shared.learn(item, TasteSignal.download);
     if (active.contains(item.id)) return;
     await _perform(item, null);
   }

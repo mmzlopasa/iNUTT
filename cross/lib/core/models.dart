@@ -67,6 +67,9 @@ class MediaItem {
   /// Every image of a multi-image post (Reddit galleries).
   List<Uri>? gallery;
 
+  /// Hashtags the site gives for this post (FikFap and similar apps).
+  List<String>? tags;
+
   MediaItem({
     String? id,
     required this.siteId,
@@ -81,10 +84,66 @@ class MediaItem {
     DateTime? addedAt,
     this.isListing = false,
     this.gallery,
+    this.tags,
   }) : id = id ?? hashKey((pageUrl ?? mediaUrl ?? thumbnailUrl)?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString()),
        addedAt = addedAt ?? DateTime.now();
 
   String get displayTitle => title.isEmpty ? siteName : title;
+
+  /// Pictures and videos collected from a forum thread carry this site id.
+  static const forumSiteId = 'forum';
+  bool get isFromForum => siteId == forumSiteId;
+
+  /// The post's hashtags: the ones the site gave, plus any #words written in the title.
+  List<String> get hashtags {
+    final out = <String>[];
+    final seen = <String>{};
+    final inline = title.split(RegExp(r'\s+')).where((w) => w.startsWith('#') && w.length > 1).map((w) => w.substring(1));
+    for (final t in [...?tags, ...inline]) {
+      final clean = t.replaceAll(RegExp(r'^[#\s]+|[#\s]+$'), '');
+      if (clean.isNotEmpty && seen.add(clean.toLowerCase())) out.add(clean);
+    }
+    return out;
+  }
+
+  /// The title with its #words taken out, for when they are shown as tags.
+  String get titleWithoutTags => title.split(' ').where((w) => !w.startsWith('#')).join(' ').trim();
+
+  /// Ways to recognise the same picture or video when another site shows it: the file name of the
+  /// media or its thumbnail (when it is distinctive), or a long title with its length.
+  List<String> get duplicateKeys {
+    final keys = <String>[];
+    final m = mediaUrl == null ? null : _fileKey(mediaUrl!, 10);
+    if (m != null) keys.add('m:$m');
+    final t = thumbnailUrl == null ? null : _fileKey(thumbnailUrl!, 16);
+    if (t != null) keys.add('i:$t');
+    final words = title.toLowerCase().split(RegExp(r'[^\p{L}\p{N}]+', unicode: true)).where((w) => w.isNotEmpty).toList();
+    if (words.length >= 4) {
+      final joined = words.join(' ');
+      if (joined.length >= 16) {
+        final d = (duration ?? '').replaceAll(RegExp(r'\D'), '');
+        if (d.isNotEmpty) {
+          keys.add('t:$joined|$d');
+        } else if (words.length >= 6) {
+          keys.add('t:$joined');
+        }
+      }
+    }
+    return keys;
+  }
+
+  static final _sizeSuffix = RegExp(r'([-_.](\d{2,4}x\d{2,4}|\d{3,4}p|thumb|thumbnail|small|medium|large|orig|original|preview|poster|hd|sd))+$');
+
+  static String? _fileKey(Uri url, int minLength) {
+    final segs = url.pathSegments.where((s) => s.isNotEmpty);
+    if (segs.isEmpty) return null;
+    var stem = segs.last.toLowerCase();
+    final dot = stem.lastIndexOf('.');
+    if (dot > 0) stem = stem.substring(0, dot);
+    stem = stem.replaceAll(_sizeSuffix, '');
+    if (stem.length < minLength || !(stem.contains(RegExp(r'\d')) || stem.length >= 20)) return null;
+    return stem;
+  }
   Uri? get referer => pageUrl ?? thumbnailUrl;
 
   /// The category this item opens when it is a listing tile.
@@ -113,6 +172,7 @@ class MediaItem {
     'addedAt': addedAt.millisecondsSinceEpoch,
     if (isListing) 'listing': true,
     if (gallery != null) 'gallery': gallery!.map((e) => e.toString()).toList(),
+    if (tags != null) 'tags': tags,
   };
 
   factory MediaItem.fromJson(Map<String, dynamic> j) => MediaItem(
@@ -129,6 +189,7 @@ class MediaItem {
     addedAt: DateTime.fromMillisecondsSinceEpoch(j['addedAt'] as int? ?? 0),
     isListing: j['listing'] == true,
     gallery: (j['gallery'] as List?)?.map((e) => Uri.parse(e as String)).toList(),
+    tags: (j['tags'] as List?)?.whereType<String>().toList(),
   );
 
   @override
