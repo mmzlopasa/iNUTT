@@ -20,7 +20,8 @@ class Scraper {
 
   static ScrapeResult parseListing(String html, Uri baseUrl, Site site, String? categoryName) {
     final result = ScrapeResult();
-    result.title = Html.first(r'''<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)''', html) ??
+    result.title =
+        Html.first(r'''<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)''', html) ??
         (Html.first(r'<title[^>]*>(.*?)</title>', html) != null ? Html.stripTags(Html.first(r'<title[^>]*>(.*?)</title>', html)!) : null);
     result.iconUrl = iconUrl(html, baseUrl);
 
@@ -109,7 +110,8 @@ class Scraper {
       }
       final title = cleanTitle(attrs['title'] ?? alt ?? text, duration: duration);
       final lowerInner = '${inner.toLowerCase()} ${attrText.toLowerCase()}';
-      final videoHint = duration != null ||
+      final videoHint =
+          duration != null ||
           lowerInner.contains('data-preview') ||
           lowerInner.contains('data-mp4') ||
           lowerInner.contains('data-webm') ||
@@ -156,15 +158,17 @@ class Scraper {
         src = Html.resolve(s, baseUrl);
       }
       if (src == null) continue;
-      add(MediaItem(
-        siteId: site.id,
-        siteName: site.name,
-        title: va['title'] ?? '',
-        thumbnailUrl: Html.resolve(va['poster'], baseUrl),
-        mediaUrl: src,
-        kind: MediaKind.video,
-        categoryName: categoryName,
-      ));
+      add(
+        MediaItem(
+          siteId: site.id,
+          siteName: site.name,
+          title: va['title'] ?? '',
+          thumbnailUrl: Html.resolve(va['poster'], baseUrl),
+          mediaUrl: src,
+          kind: MediaKind.video,
+          categoryName: categoryName,
+        ),
+      );
     }
 
     // 3) Gallery pages: standalone large images.
@@ -177,15 +181,17 @@ class Scraper {
         final h = int.tryParse(ia['height'] ?? '');
         if (w != null && w < 200) continue;
         if (h != null && h < 150) continue;
-        add(MediaItem(
-          siteId: site.id,
-          siteName: site.name,
-          title: ia['alt'] ?? ia['title'] ?? '',
-          thumbnailUrl: bestImage(ia, baseUrl, preferSmall: true) ?? full,
-          mediaUrl: full,
-          kind: MediaKind.guess(full) == MediaKind.gif ? MediaKind.gif : MediaKind.image,
-          categoryName: categoryName,
-        ));
+        add(
+          MediaItem(
+            siteId: site.id,
+            siteName: site.name,
+            title: ia['alt'] ?? ia['title'] ?? '',
+            thumbnailUrl: bestImage(ia, baseUrl, preferSmall: true) ?? full,
+            mediaUrl: full,
+            kind: MediaKind.guess(full) == MediaKind.gif ? MediaKind.gif : MediaKind.image,
+            categoryName: categoryName,
+          ),
+        );
       }
     }
 
@@ -193,15 +199,17 @@ class Scraper {
     if (items.length < 3) {
       for (final url in rawMediaUrls(html, baseUrl).take(60)) {
         final k = MediaKind.guess(url) ?? MediaKind.video;
-        add(MediaItem(
-          siteId: site.id,
-          siteName: site.name,
-          title: '',
-          thumbnailUrl: k == MediaKind.video ? null : url,
-          mediaUrl: url,
-          kind: k,
-          categoryName: categoryName,
-        ));
+        add(
+          MediaItem(
+            siteId: site.id,
+            siteName: site.name,
+            title: '',
+            thumbnailUrl: k == MediaKind.video ? null : url,
+            mediaUrl: url,
+            kind: k,
+            categoryName: categoryName,
+          ),
+        );
       }
     }
 
@@ -366,16 +374,18 @@ class Scraper {
       }
       if (media == null && thumb == null) continue;
       if (thumb == null && kind != MediaKind.video) thumb = media;
-      result.items.add(MediaItem(
-        siteId: site.id,
-        siteName: site.name,
-        title: title,
-        thumbnailUrl: thumb,
-        mediaUrl: media,
-        pageUrl: pageUrl,
-        kind: kind,
-        categoryName: categoryName,
-      ));
+      result.items.add(
+        MediaItem(
+          siteId: site.id,
+          siteName: site.name,
+          title: title,
+          thumbnailUrl: thumb,
+          mediaUrl: media,
+          pageUrl: pageUrl,
+          kind: kind,
+          categoryName: categoryName,
+        ),
+      );
     }
     return result;
   }
@@ -533,18 +543,20 @@ class Scraper {
       final external = _s(p['url_overridden_by_dest']);
       // Open the external page directly; it holds the actual media.
       if (media == null && external != null) page = external;
-      result.items.add(MediaItem(
-        id: hashKey((permalink ?? media ?? thumb).toString()),
-        siteId: site.id,
-        siteName: site.name,
-        title: Html.decodeEntities(p['title'] as String? ?? ''),
-        thumbnailUrl: thumb ?? (kind == MediaKind.video ? null : media),
-        mediaUrl: media,
-        pageUrl: page,
-        kind: kind,
-        categoryName: categoryName ?? p['subreddit_name_prefixed'] as String?,
-        gallery: gallery.length > 1 ? gallery : null,
-      ));
+      result.items.add(
+        MediaItem(
+          id: hashKey((permalink ?? media ?? thumb).toString()),
+          siteId: site.id,
+          siteName: site.name,
+          title: Html.decodeEntities(p['title'] as String? ?? ''),
+          thumbnailUrl: thumb ?? (kind == MediaKind.video ? null : media),
+          mediaUrl: media,
+          pageUrl: page,
+          kind: kind,
+          categoryName: categoryName ?? p['subreddit_name_prefixed'] as String?,
+          gallery: gallery.length > 1 ? gallery : null,
+        ),
+      );
     }
     final after = d['after'];
     if (after is String) result.nextPage = redditJsonUrl(listingUrl, after: after);
@@ -569,7 +581,8 @@ class Scraper {
   static Uri? iconUrl(String html, Uri base) {
     for (final rel in ['apple-touch-icon', 'icon', 'shortcut icon']) {
       final p = Html.escape(rel);
-      final h = Html.first('<link[^>]+rel=["\']$p["\'][^>]*href=["\']([^"\']+)', html) ??
+      final h =
+          Html.first('<link[^>]+rel=["\']$p["\'][^>]*href=["\']([^"\']+)', html) ??
           Html.first('<link[^>]+href=["\']([^"\']+)["\'][^>]*rel=["\']$p["\']', html);
       if (h != null) return Html.resolve(h, base);
     }
@@ -583,8 +596,23 @@ class Scraper {
       if (u != null) return u;
     }
     final order = preferSmall
-        ? ['data-src', 'data-original', 'data-lazy-src', 'data-lazy', 'data-mediumthumb', 'data-thumb_url', 'data-thumb-url',
-           'data-thumb', 'data-image', 'data-webp', 'data-poster', 'data-url', 'src', 'data-full', 'data-large']
+        ? [
+            'data-src',
+            'data-original',
+            'data-lazy-src',
+            'data-lazy',
+            'data-mediumthumb',
+            'data-thumb_url',
+            'data-thumb-url',
+            'data-thumb',
+            'data-image',
+            'data-webp',
+            'data-poster',
+            'data-url',
+            'src',
+            'data-full',
+            'data-large',
+          ]
         : ['data-full', 'data-large', 'data-zoom-image', 'data-hi-res', 'data-original', 'data-src', 'data-lazy-src', 'data-lazy', 'src'];
     for (final key in order) {
       final u = Html.resolve(a[key], base);
@@ -603,7 +631,21 @@ class Scraper {
     final segs = u.pathSegments;
     final s = segs.isEmpty ? '' : segs.last.toLowerCase();
     final path = u.path.toLowerCase();
-    for (final w in ['logo', 'favicon', 'icon', 'avatar', 'sprite', 'banner', 'emoji', 'badge', 'flag', '/ads/', 'pixel', 'tracking', 'button']) {
+    for (final w in [
+      'logo',
+      'favicon',
+      'icon',
+      'avatar',
+      'sprite',
+      'banner',
+      'emoji',
+      'badge',
+      'flag',
+      '/ads/',
+      'pixel',
+      'tracking',
+      'button',
+    ]) {
       if (s.contains(w) || (w.startsWith('/') && path.contains(w))) return true;
     }
     return false;
@@ -611,8 +653,21 @@ class Scraper {
 
   static bool isVideoPath(String p) {
     final l = p.toLowerCase();
-    return ['/video', '/videos/', '/watch', '/v/', '/embed/', '/movie', '/clip', '/vod/', '/play/', 'view_video', '/porn-video', '/sex-video', '/scene']
-        .any(l.contains);
+    return [
+      '/video',
+      '/videos/',
+      '/watch',
+      '/v/',
+      '/embed/',
+      '/movie',
+      '/clip',
+      '/vod/',
+      '/play/',
+      'view_video',
+      '/porn-video',
+      '/sex-video',
+      '/scene',
+    ].any(l.contains);
   }
 
   static bool isKnownMediaHost(String? host) {
@@ -646,8 +701,10 @@ class Scraper {
     final unescaped = html.replaceAll(r'\/', '/').replaceAll(r'/', '/');
     final out = <Uri>[];
     for (final m in Html.matches(
-        r'''(https?://[^"'\s<>()\\]+?\.(?:mp4|m3u8|webm|gif|jpe?g|png|webp)(?:\?[^"'\s<>\\]*)?)(?=["'\s<>\\)])''', unescaped,
-        limit: 400)) {
+      r'''(https?://[^"'\s<>()\\]+?\.(?:mp4|m3u8|webm|gif|jpe?g|png|webp)(?:\?[^"'\s<>\\]*)?)(?=["'\s<>\\)])''',
+      unescaped,
+      limit: 400,
+    )) {
       final u = Html.resolve(m[1], base);
       if (u == null || isJunkImage(u) || out.contains(u)) continue;
       out.add(u);
@@ -684,7 +741,8 @@ class Scraper {
   }
 
   static Uri? nextPage(String html, Uri current) {
-    final h = Html.first(r'''<link[^>]+rel=["']next["'][^>]*href=["']([^"']+)''', html) ??
+    final h =
+        Html.first(r'''<link[^>]+rel=["']next["'][^>]*href=["']([^"']+)''', html) ??
         Html.first(r'''<a\b[^>]*rel=["']next["'][^>]*href=["']([^"']+)''', html) ??
         Html.first(r'''<a\b[^>]*href=["']([^"']+)["'][^>]*rel=["']next["']''', html);
     final hu = Html.resolve(h, current);

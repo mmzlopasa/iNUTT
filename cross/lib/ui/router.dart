@@ -75,17 +75,22 @@ class AppRouter extends ChangeNotifier {
     if (i < 0) i = 0;
     final lower = (i - 150).clamp(0, media.length);
     final upper = (i + 150).clamp(0, media.length);
-    rootKey.currentState?.push(PageRouteBuilder<void>(
-      opaque: false,
-      barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 260),
-      reverseTransitionDuration: const Duration(milliseconds: 200),
-      pageBuilder: (_, __, ___) => MediaViewer(items: media.sublist(lower, upper), startIndex: i - lower),
-      transitionsBuilder: (_, a, __, child) => FadeTransition(
-        opacity: a,
-        child: ScaleTransition(scale: Tween(begin: 0.96, end: 1.0).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: child),
+    rootKey.currentState?.push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.transparent,
+        transitionDuration: const Duration(milliseconds: 260),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+        pageBuilder: (_, __, ___) => MediaViewer(items: media.sublist(lower, upper), startIndex: i - lower),
+        transitionsBuilder: (_, a, __, child) => FadeTransition(
+          opacity: a,
+          child: ScaleTransition(
+            scale: Tween(begin: 0.96, end: 1.0).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+            child: child,
+          ),
+        ),
       ),
-    ));
+    );
   }
 
   /// Called from the viewer when an item turned out to be a category page.

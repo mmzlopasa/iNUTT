@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:math';
 import 'dart:ui' as ui;
+
+import 'package:android_intent_plus/android_intent.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/downloads.dart';
 import '../core/feed_engine.dart';
@@ -28,7 +33,17 @@ class MediaViewer extends StatefulWidget {
   State<MediaViewer> createState() => _MediaViewerState();
 }
 
+/// Players of the pages on screen, so the viewer's controls can reach the active one.
+final Map<String, Player> _players = {};
+
 class _MediaViewerState extends State<MediaViewer> {
+  bool _slideshow = false;
+  Timer? _slideTimer;
+  StreamSubscription<bool>? _ended;
+  double _rate = 1;
+  Duration? _loopA;
+  Duration? _loopB;
+  StreamSubscription<Duration>? _loopSub;
   late final PageController _page = PageController(initialPage: widget.startIndex);
   late int _index = widget.startIndex;
   bool _chrome = true;
@@ -47,9 +62,172 @@ class _MediaViewerState extends State<MediaViewer> {
 
   @override
   void dispose() {
+    _slideTimer?.cancel();
+    _ended?.cancel();
+    _loopSub?.cancel();
     _page.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  Player? get _player => _players[_current.id];
+  bool get _isVideo => _current.kind == MediaKind.video || FeedEngine.shared.cachedResolution(_current)?.kind == MediaKind.video;
+
+  void _seek(int seconds) {
+    final p = _player;
+    if (p == null) return;
+    final t = p.state.position + Duration(seconds: seconds);
+    p.seek(t < Duration.zero ? Duration.zero : t);
+    HapticFeedback.selectionClick();
+  }
+
+  void _cycleRate() {
+    const steps = [1.0, 1.25, 1.5, 2.0, 0.5, 0.75];
+    final i = steps.indexOf(_rate);
+    setState(() => _rate = steps[(i + 1) % steps.length]);
+    _player?.setRate(_rate);
+  }
+
+  /// First tap marks A, second marks B and loops between them, third clears.
+  void _tapLoop() {
+    final p = _player;
+    if (p == null) return;
+    final now = p.state.position;
+    if (_loopB != null || (_loopA != null && now <= _loopA! + const Duration(milliseconds: 300))) {
+      _clearLoop();
+    } else if (_loopA != null) {
+      setState(() => _loopB = now);
+      p.seek(_loopA!);
+      _loopSub = p.stream.position.listen((pos) {
+        if (_loopA != null && _loopB != null && pos >= _loopB!) p.seek(_loopA!);
+      });
+    } else {
+      setState(() => _loopA = now);
+    }
+    HapticFeedback.selectionClick();
+  }
+
+  void _clearLoop() {
+    _loopSub?.cancel();
+    _loopSub = null;
+    if (mounted) {
+      setState(() {
+        _loopA = null;
+        _loopB = null;
+      });
+    }
+  }
+
+  /// Opens the video in another app: VLC, MX Player, or a casting app for Chromecast and smart TVs.
+  Future<void> _external() async {
+    final r = await FeedEngine.shared.resolve(_current);
+    final u = r?.url ?? _current.mediaUrl;
+    if (u == null) return;
+    if (Platform.isAndroid) {
+      try {
+        await AndroidIntent(action: 'action_view', data: u.toString(), type: _isVideo ? 'video/*' : 'image/*').launchChooser('Play on…');
+      } catch (_) {
+        DownloadManager.shared.show('No app found to play this', success: false);
+      }
+    } else {
+      await launchUrl(u, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  // Slideshow
+
+  void _toggleSlideshow() {
+    setState(() {
+      _slideshow = !_slideshow;
+      if (_slideshow) _chrome = false;
+    });
+    _scheduleSlide();
+  }
+
+  /// Pictures stay for the chosen time; a video moves on when it ends (or after three minutes).
+  void _scheduleSlide() {
+    _slideTimer?.cancel();
+    _ended?.cancel();
+    if (!_slideshow) return;
+    final secs = AppSettings.shared.slideshowSeconds;
+    if (_isVideo) {
+      _slideTimer = Timer(const Duration(minutes: 3), _advance);
+      void watch() {
+        final p = _player;
+        if (p == null) {
+          _slideTimer = Timer(const Duration(milliseconds: 500), () {
+            if (_slideshow) watch();
+          });
+          return;
+        }
+        _ended = p.stream.completed.listen((done) {
+          if (done) _advance();
+        });
+      }
+
+      Timer(Duration(seconds: secs), () {
+        if (_slideshow) watch();
+      });
+    } else {
+      _slideTimer = Timer(Duration(seconds: secs), _advance);
+    }
+  }
+
+  void _advance() {
+    if (!_slideshow || !mounted || widget.items.length < 2) return;
+    var next = _index + 1;
+    if (AppSettings.shared.slideshowRandom) {
+      final r = Random();
+      do {
+        next = r.nextInt(widget.items.length);
+      } while (next == _index);
+    }
+    _page.animateToPage(next % widget.items.length, duration: const Duration(milliseconds: 350), curve: Curves.easeInOut);
+  }
+
+  Future<void> _pickCollection(MediaItem item) async {
+    final store = CollectionStore.shared;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: T.navy,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Text('Add to collection', style: T.display(18)),
+            ),
+            for (final c in store.collections)
+              ListTile(
+                leading: Icon(store.contains(item, c.id) ? Icons.check_circle_rounded : Icons.folder_rounded, color: T.gold),
+                title: Text(c.name, style: T.text(15, color: T.ink)),
+                trailing: Text('${c.items.length}', style: T.mono(12)),
+                onTap: () => Navigator.pop(ctx, c.id),
+              ),
+            ListTile(
+              leading: const Icon(Icons.create_new_folder_rounded, color: T.gold),
+              title: Text('New collection…', style: T.text(15, color: T.ink)),
+              onTap: () => Navigator.pop(ctx, ''),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    if (picked.isEmpty) {
+      final name = await askName(context, 'New collection');
+      final c = name == null ? null : store.create(name, item);
+      if (c != null) DownloadManager.shared.show('Added to ${c.name}');
+    } else {
+      final added = store.toggle(item, picked);
+      final c = store.collections.firstWhere((c) => c.id == picked);
+      DownloadManager.shared.show(added ? 'Added to ${c.name}' : 'Removed from ${c.name}');
+    }
+    if (mounted) setState(() {});
   }
 
   /// Resolve and warm the neighbours so swiping feels instant.
@@ -108,12 +286,15 @@ class _MediaViewerState extends State<MediaViewer> {
                     itemCount: widget.items.length,
                     onPageChanged: (i) {
                       HapticFeedback.selectionClick();
+                      _clearLoop();
                       setState(() {
                         _index = i;
                         _zoomed = false;
+                        _rate = 1;
                       });
                       Library.shared.record(_current);
                       _preload(i);
+                      _scheduleSlide();
                     },
                     itemBuilder: (context, i) => MediaPage(
                       key: ValueKey(widget.items[i].id),
@@ -183,6 +364,8 @@ class _MediaViewerState extends State<MediaViewer> {
                     ],
                   ),
                 ),
+                _round(_slideshow ? Icons.pause_rounded : Icons.slideshow_rounded, _toggleSlideshow, active: _slideshow),
+                const SizedBox(width: 10),
                 Text('${_index + 1} / ${widget.items.length}', style: T.mono(12, color: Colors.white70)),
                 if (wide) ...[
                   const SizedBox(width: 10),
@@ -194,15 +377,32 @@ class _MediaViewerState extends State<MediaViewer> {
             ),
           ),
           const Spacer(),
+          if (_isVideo)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _pill('−10 s', () => _seek(-10)),
+                  _pill('+10 s', () => _seek(10)),
+                  _pill('${_rate == _rate.roundToDouble() ? _rate.toInt() : _rate}×', _cycleRate),
+                  _pill(_loopB != null ? 'A–B ✕' : (_loopA != null ? 'Set B' : 'A–B'), _tapLoop, active: _loopA != null),
+                  _pill(Platform.isAndroid ? 'Cast / other app' : 'Open in player', _external),
+                ],
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: Center(
               child: Frosted(
                 radius: 26,
                 child: ListenableBuilder(
-                  listenable: Listenable.merge([Library.shared, DownloadManager.shared]),
+                  listenable: Listenable.merge([Library.shared, DownloadManager.shared, CollectionStore.shared]),
                   builder: (_, __) {
                     final fav = Library.shared.isFavorite(item);
+                    final inCollection = CollectionStore.shared.inAny(item);
                     final downloading = DownloadManager.shared.active.contains(item.id);
                     return Row(
                       mainAxisSize: MainAxisSize.min,
@@ -211,6 +411,7 @@ class _MediaViewerState extends State<MediaViewer> {
                           HapticFeedback.lightImpact();
                           Library.shared.toggleFavorite(item);
                         }, active: fav),
+                        _action(Icons.create_new_folder_rounded, 'Collect', () => _pickCollection(item), active: inCollection),
                         _action(
                           downloading ? Icons.hourglass_top_rounded : Icons.download_rounded,
                           'Download',
@@ -239,11 +440,25 @@ class _MediaViewerState extends State<MediaViewer> {
     );
   }
 
-  Widget _round(IconData icon, VoidCallback onTap) => Pressable(
+  Widget _round(IconData icon, VoidCallback onTap, {bool active = false}) => Pressable(
     onTap: onTap,
     child: Frosted(
       radius: 21,
-      child: SizedBox(width: 42, height: 42, child: Icon(icon, color: Colors.white, size: 22)),
+      child: SizedBox(width: 42, height: 42, child: Icon(icon, color: active ? T.gold : Colors.white, size: 22)),
+    ),
+  );
+
+  Widget _pill(String label, VoidCallback onTap, {bool active = false}) => Pressable(
+    onTap: onTap,
+    child: Frosted(
+      radius: 18,
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        alignment: Alignment.center,
+        decoration: active ? BoxDecoration(gradient: T.goldGradient, borderRadius: BorderRadius.circular(18)) : null,
+        child: Text(label, style: T.mono(13, color: active ? T.onGold : Colors.white)),
+      ),
     ),
   );
 
@@ -305,6 +520,7 @@ class _MediaPageState extends State<MediaPage> {
 
   @override
   void dispose() {
+    if (identical(_players[widget.item.id], _player)) _players.remove(widget.item.id);
     _player?.dispose();
     super.dispose();
   }
@@ -340,6 +556,7 @@ class _MediaPageState extends State<MediaPage> {
         await p.dispose();
         return;
       }
+      _players[widget.item.id] = p;
       setState(() {
         _player = p;
         _video = v;
@@ -358,7 +575,17 @@ class _MediaPageState extends State<MediaPage> {
           ? _placeholder()
           : Padding(
               padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top + 60, bottom: 110),
-              child: Video(controller: _video!, fill: Colors.transparent),
+              child: MaterialVideoControlsTheme(
+                // Double-tap left or right to skip 10 s, hold for 2× speed.
+                normal: const MaterialVideoControlsThemeData(
+                  seekOnDoubleTap: true,
+                  speedUpOnLongPress: true,
+                  seekBarPositionColor: T.gold,
+                  seekBarThumbColor: T.gold,
+                ),
+                fullscreen: kDefaultMaterialVideoControlsThemeDataFullscreen,
+                child: Video(controller: _video!, fill: Colors.transparent),
+              ),
             );
     } else if (r != null && r.gallery.length > 1) {
       child = _gallery(r);

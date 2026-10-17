@@ -62,14 +62,22 @@ class T {
         filled: true,
         fillColor: Colors.white.withValues(alpha: 0.05),
         hintStyle: text(14, color: muted),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: line)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: line)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: gold)),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: line),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: line),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: gold),
+        ),
       ),
-      pageTransitionsTheme: const PageTransitionsTheme(builders: {
-        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
-      }),
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {TargetPlatform.android: CupertinoPageTransitionsBuilder(), TargetPlatform.windows: CupertinoPageTransitionsBuilder()},
+      ),
     );
   }
 }
@@ -84,19 +92,21 @@ class NightSky extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const RepaintBoundary(
-        child: DecoratedBox(
-          decoration: BoxDecoration(color: T.bg),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-                gradient: RadialGradient(center: Alignment(0.8, -1.1), radius: 1.0, colors: [Color(0x38FFD76A), Color(0x00FFD76A)])),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                  gradient: RadialGradient(center: Alignment(-1, 1.1), radius: 1.1, colors: [Color(0x2E6C5CE7), Color(0x006C5CE7)])),
-              child: CustomPaint(painter: const _Stars(), size: Size.infinite),
-            ),
-          ),
+    child: DecoratedBox(
+      decoration: BoxDecoration(color: T.bg),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(center: Alignment(0.8, -1.1), radius: 1.0, colors: [Color(0x38FFD76A), Color(0x00FFD76A)]),
         ),
-      );
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(center: Alignment(-1, 1.1), radius: 1.1, colors: [Color(0x2E6C5CE7), Color(0x006C5CE7)]),
+          ),
+          child: CustomPaint(painter: const _Stars(), size: Size.infinite),
+        ),
+      ),
+    ),
+  );
 }
 
 class _Stars extends CustomPainter {
@@ -123,10 +133,12 @@ class SkyScaffold extends StatelessWidget {
   const SkyScaffold({super.key, required this.body, this.appBar});
 
   @override
-  Widget build(BuildContext context) => Stack(children: [
-        const Positioned.fill(child: NightSky()),
-        Scaffold(backgroundColor: Colors.transparent, appBar: appBar, body: body),
-      ]);
+  Widget build(BuildContext context) => Stack(
+    children: [
+      const Positioned.fill(child: NightSky()),
+      Scaffold(backgroundColor: Colors.transparent, appBar: appBar, body: body),
+    ],
+  );
 }
 
 class GlassCard extends StatelessWidget {
@@ -138,21 +150,21 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: padding,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(radius),
-          color: T.navy.withValues(alpha: 0.72),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Colors.white.withValues(alpha: 0.10), Colors.white.withValues(alpha: 0.03), Colors.white.withValues(alpha: 0.055)],
-            stops: const [0, 0.42, 1],
-          ),
-          border: Border.all(color: highlighted ? T.gold.withValues(alpha: 0.35) : T.edge),
-          boxShadow: const [BoxShadow(color: Color(0x73000000), blurRadius: 18, offset: Offset(0, 12))],
-        ),
-        child: child,
-      );
+    padding: padding,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(radius),
+      color: T.navy.withValues(alpha: 0.72),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Colors.white.withValues(alpha: 0.10), Colors.white.withValues(alpha: 0.03), Colors.white.withValues(alpha: 0.055)],
+        stops: const [0, 0.42, 1],
+      ),
+      border: Border.all(color: highlighted ? T.gold.withValues(alpha: 0.35) : T.edge),
+      boxShadow: const [BoxShadow(color: Color(0x73000000), blurRadius: 18, offset: Offset(0, 12))],
+    ),
+    child: child,
+  );
 }
 
 class GoldButton extends StatelessWidget {
@@ -163,24 +175,30 @@ class GoldButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Opacity(
-        opacity: onPressed == null ? 0.5 : 1,
-        child: Pressable(
-          onTap: onPressed,
-          child: Container(
-            height: 50,
-            padding: const EdgeInsets.symmetric(horizontal: 22),
-            decoration: BoxDecoration(
-              gradient: T.goldGradient,
-              borderRadius: BorderRadius.circular(25),
-              boxShadow: [BoxShadow(color: T.gold.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6))],
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (icon != null) ...[Icon(icon, size: 18, color: T.onGold), const SizedBox(width: 8)],
-              Text(label, style: T.text(16, weight: FontWeight.w600, color: T.onGold)),
-            ]),
-          ),
+    opacity: onPressed == null ? 0.5 : 1,
+    child: Pressable(
+      onTap: onPressed,
+      child: Container(
+        height: 50,
+        padding: const EdgeInsets.symmetric(horizontal: 22),
+        decoration: BoxDecoration(
+          gradient: T.goldGradient,
+          borderRadius: BorderRadius.circular(25),
+          boxShadow: [BoxShadow(color: T.gold.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6))],
         ),
-      );
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[Icon(icon, size: 18, color: T.onGold), const SizedBox(width: 8)],
+            Text(
+              label,
+              style: T.text(16, weight: FontWeight.w600, color: T.onGold),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class GhostButton extends StatelessWidget {
@@ -190,19 +208,22 @@ class GhostButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Pressable(
-        onTap: onPressed,
-        child: Container(
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: T.line2),
-          ),
-          child: Text(label, style: T.text(15, weight: FontWeight.w500, color: T.ink)),
-        ),
-      );
+    onTap: onPressed,
+    child: Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: T.line2),
+      ),
+      child: Text(
+        label,
+        style: T.text(15, weight: FontWeight.w500, color: T.ink),
+      ),
+    ),
+  );
 }
 
 /// Scales down slightly while pressed, like the iOS card buttons.
@@ -221,17 +242,17 @@ class _PressableState extends State<Pressable> {
 
   @override
   Widget build(BuildContext context) => MouseRegion(
-        cursor: widget.onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: widget.onTap == null ? null : (_) => setState(() => _down = true),
-          onTapUp: (_) => setState(() => _down = false),
-          onTapCancel: () => setState(() => _down = false),
-          onTap: widget.onTap,
-          onLongPress: widget.onLongPress,
-          child: AnimatedScale(scale: _down ? 0.96 : 1, duration: const Duration(milliseconds: 140), child: widget.child),
-        ),
-      );
+    cursor: widget.onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: widget.onTap == null ? null : (_) => setState(() => _down = true),
+      onTapUp: (_) => setState(() => _down = false),
+      onTapCancel: () => setState(() => _down = false),
+      onTap: widget.onTap,
+      onLongPress: widget.onLongPress,
+      child: AnimatedScale(scale: _down ? 0.96 : 1, duration: const Duration(milliseconds: 140), child: widget.child),
+    ),
+  );
 }
 
 class Chip2 extends StatelessWidget {
@@ -243,23 +264,29 @@ class Chip2 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Pressable(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          height: 34,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            gradient: selected ? T.goldGradient : null,
-            color: selected ? null : Colors.white.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(17),
-            border: Border.all(color: selected ? Colors.transparent : T.line),
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        gradient: selected ? T.goldGradient : null,
+        color: selected ? null : Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: selected ? Colors.transparent : T.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[Icon(icon, size: 14, color: selected ? T.onGold : T.body), const SizedBox(width: 6)],
+          Text(
+            title,
+            style: T.text(13, weight: FontWeight.w500, color: selected ? T.onGold : T.body),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            if (icon != null) ...[Icon(icon, size: 14, color: selected ? T.onGold : T.body), const SizedBox(width: 6)],
-            Text(title, style: T.text(13, weight: FontWeight.w500, color: selected ? T.onGold : T.body)),
-          ]),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 }
 
 /// "iNUTT." wordmark with the gold dot, like "scyhost."
@@ -268,10 +295,17 @@ class Wordmark extends StatelessWidget {
   const Wordmark({super.key, this.size = 28});
 
   @override
-  Widget build(BuildContext context) => Text.rich(TextSpan(children: [
+  Widget build(BuildContext context) => Text.rich(
+    TextSpan(
+      children: [
         TextSpan(text: 'iNUTT', style: T.display(size)),
-        TextSpan(text: '.', style: T.display(size, color: T.gold)),
-      ]));
+        TextSpan(
+          text: '.',
+          style: T.display(size, color: T.gold),
+        ),
+      ],
+    ),
+  );
 }
 
 class SectionHeader extends StatelessWidget {
@@ -282,25 +316,41 @@ class SectionHeader extends StatelessWidget {
   const SectionHeader({super.key, required this.title, this.subtitle, this.actionTitle, this.onAction});
 
   @override
-  Widget build(BuildContext context) => Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: T.display(19, weight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: T.display(19, weight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             if (subtitle != null) Text(subtitle!, style: T.mono(11), maxLines: 1, overflow: TextOverflow.ellipsis),
-          ]),
+          ],
         ),
-        if (actionTitle != null && onAction != null)
-          Pressable(
-            onTap: onAction,
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Row(children: [
-                Text(actionTitle!, style: T.text(13, weight: FontWeight.w500, color: T.gold)),
+      ),
+      if (actionTitle != null && onAction != null)
+        Pressable(
+          onTap: onAction,
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                Text(
+                  actionTitle!,
+                  style: T.text(13, weight: FontWeight.w500, color: T.gold),
+                ),
                 const Icon(Icons.chevron_right_rounded, size: 18, color: T.gold),
-              ]),
+              ],
             ),
           ),
-      ]);
+        ),
+    ],
+  );
 }
 
 class EmptyState extends StatelessWidget {
@@ -313,32 +363,38 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => GlassCard(
-        radius: 28,
-        padding: const EdgeInsets.all(28),
-        child: SizedBox(
-          width: double.infinity,
-          child: Column(children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: T.gold.withValues(alpha: 0.12),
-                border: Border.all(color: T.gold.withValues(alpha: 0.3)),
-              ),
-              child: Icon(icon, size: 36, color: T.gold),
+    radius: 28,
+    padding: const EdgeInsets.all(28),
+    child: SizedBox(
+      width: double.infinity,
+      child: Column(
+        children: [
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: T.gold.withValues(alpha: 0.12),
+              border: Border.all(color: T.gold.withValues(alpha: 0.3)),
             ),
-            const SizedBox(height: 14),
-            Text(title, style: T.display(20, weight: FontWeight.w600), textAlign: TextAlign.center),
-            const SizedBox(height: 8),
-            Text(message, style: T.text(14), textAlign: TextAlign.center),
-            if (buttonTitle != null && onButton != null) ...[
-              const SizedBox(height: 18),
-              GoldButton(label: buttonTitle!, onPressed: onButton),
-            ],
-          ]),
-        ),
-      );
+            child: Icon(icon, size: 36, color: T.gold),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            style: T.display(20, weight: FontWeight.w600),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(message, style: T.text(14), textAlign: TextAlign.center),
+          if (buttonTitle != null && onButton != null) ...[
+            const SizedBox(height: 18),
+            GoldButton(label: buttonTitle!, onPressed: onButton),
+          ],
+        ],
+      ),
+    ),
+  );
 }
 
 class SiteIcon extends StatelessWidget {
@@ -358,14 +414,17 @@ class SiteIcon extends StatelessWidget {
         border: Border.all(color: T.edge, width: 0.5),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Stack(alignment: Alignment.center, children: [
-        Text(letter, style: T.display(size * 0.45, color: T.gold)),
-        if (site?.iconUrl != null)
-          Padding(
-            padding: EdgeInsets.all(size * 0.12),
-            child: RemoteImage(url: site!.iconUrl, referer: site!.url, fit: BoxFit.contain, placeholder: false, decodeWidth: 128),
-          ),
-      ]),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Text(letter, style: T.display(size * 0.45, color: T.gold)),
+          if (site?.iconUrl != null)
+            Padding(
+              padding: EdgeInsets.all(size * 0.12),
+              child: RemoteImage(url: site!.iconUrl, referer: site!.url, fit: BoxFit.contain, placeholder: false, decodeWidth: 128),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -378,19 +437,19 @@ class Frosted extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0x9E0D0F14),
-              borderRadius: BorderRadius.circular(radius),
-              border: Border.all(color: T.edge),
-            ),
-            child: child,
-          ),
+    borderRadius: BorderRadius.circular(radius),
+    child: BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0x9E0D0F14),
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: T.edge),
         ),
-      );
+        child: child,
+      ),
+    ),
+  );
 }
 
 String relativeTime(DateTime d) {
@@ -400,4 +459,33 @@ String relativeTime(DateTime d) {
   if (diff.inHours < 24) return '${diff.inHours} hr. ago';
   if (diff.inDays < 7) return '${diff.inDays} day${diff.inDays == 1 ? '' : 's'} ago';
   return '${d.day}.${d.month}.${d.year}.';
+}
+
+/// Asks for a short name, such as a new collection's. Returns null when cancelled.
+Future<String?> askName(BuildContext context, String title, {String initial = ''}) {
+  final c = TextEditingController(text: initial);
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: T.navy,
+      title: Text(title, style: T.display(18)),
+      content: TextField(
+        controller: c,
+        autofocus: true,
+        style: T.text(15, color: T.ink),
+        decoration: const InputDecoration(hintText: 'Name'),
+        onSubmitted: (v) => Navigator.pop(ctx, v.trim().isEmpty ? null : v.trim()),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, c.text.trim().isEmpty ? null : c.text.trim()),
+          child: Text(
+            'Save',
+            style: T.text(14, weight: FontWeight.w600, color: T.gold),
+          ),
+        ),
+      ],
+    ),
+  );
 }

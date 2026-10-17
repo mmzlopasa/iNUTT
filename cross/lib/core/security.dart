@@ -21,7 +21,12 @@ class LockManager extends ChangeNotifier {
   int pinLength = 4;
   String? _pinHash;
   String? _salt;
+  String? _decoyHash;
   bool _authenticating = false;
+
+  /// Unlocked with the decoy PIN: an empty app is shown instead of the real one until the next lock.
+  bool decoy = false;
+  bool get hasDecoyPin => _decoyHash != null;
 
   bool get hasLock => AppSettings.shared.pinEnabled || AppSettings.shared.biometricEnabled;
 
@@ -29,6 +34,7 @@ class LockManager extends ChangeNotifier {
     try {
       _pinHash = await _storage.read(key: 'pinHash');
       _salt = await _storage.read(key: 'pinSalt');
+      _decoyHash = await _storage.read(key: 'decoyHash');
       pinLength = int.tryParse(await _storage.read(key: 'pinLength') ?? '') ?? 4;
     } catch (_) {}
     try {
@@ -41,21 +47,20 @@ class LockManager extends ChangeNotifier {
   }
 
   void lockIfNeeded() {
-    if (hasLock && AppSettings.shared.lockOnBackground && !_authenticating) {
-      isLocked = true;
-      notifyListeners();
-    }
+    if (hasLock && (AppSettings.shared.lockOnBackground || decoy) && !_authenticating) lockNow();
   }
 
-  /// Locks right away, from the Home lock button.
+  /// Locks right away, from the Home lock button or a shake.
   void lockNow() {
     if (!hasLock) return;
     isLocked = true;
+    decoy = false;
     notifyListeners();
   }
 
   void unlock() {
     isLocked = false;
+    decoy = false;
     notifyListeners();
   }
 
@@ -77,12 +82,34 @@ class LockManager extends ChangeNotifier {
 
   bool verify(String pin) {
     if (_pinHash == null || _salt == null) return false;
-    final ok = _hash(pin, _salt!) == _pinHash;
+    final h = _hash(pin, _salt!);
+    if (_decoyHash != null && h == _decoyHash && h != _pinHash) {
+      isLocked = false;
+      decoy = true;
+      notifyListeners();
+      return true;
+    }
+    final ok = h == _pinHash;
     if (ok) unlock();
     return ok;
   }
 
+  bool matchesPin(String pin) => _pinHash != null && _salt != null && _hash(pin, _salt!) == _pinHash;
+
+  Future<void> setDecoyPin(String? pin) async {
+    if (pin == null || _salt == null) {
+      _decoyHash = null;
+      await _storage.delete(key: 'decoyHash');
+    } else {
+      _decoyHash = _hash(pin, _salt!);
+      await _storage.write(key: 'decoyHash', value: _decoyHash);
+    }
+    notifyListeners();
+  }
+
   Future<void> setPin(String pin) async {
+    // A new salt would make the decoy PIN unusable; it has to be set again.
+    await setDecoyPin(null);
     final r = Random.secure();
     _salt = base64Url.encode(List.generate(16, (_) => r.nextInt(256)));
     _pinHash = _hash(pin, _salt!);
@@ -95,6 +122,7 @@ class LockManager extends ChangeNotifier {
   }
 
   Future<void> removePin() async {
+    await setDecoyPin(null);
     _pinHash = null;
     _salt = null;
     await _storage.delete(key: 'pinHash');

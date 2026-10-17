@@ -25,20 +25,20 @@ class _ShimmerState extends State<Shimmer> with SingleTickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) => RepaintBoundary(
-        child: AnimatedBuilder(
-          animation: _c,
-          builder: (_, __) => DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(widget.radius),
-              gradient: LinearGradient(
-                begin: Alignment(-1.5 + 3 * _c.value, -0.3),
-                end: Alignment(-0.5 + 3 * _c.value, 0.3),
-                colors: const [T.navy2, Color(0xFF242836), T.navy2],
-              ),
-            ),
+    child: AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) => DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.radius),
+          gradient: LinearGradient(
+            begin: Alignment(-1.5 + 3 * _c.value, -0.3),
+            end: Alignment(-0.5 + 3 * _c.value, 0.3),
+            colors: const [T.navy2, Color(0xFF242836), T.navy2],
           ),
         ),
-      );
+      ),
+    ),
+  );
 }
 
 /// Network image through the shared memory + disk cache. Cached images appear in the first frame.
@@ -103,9 +103,8 @@ class _RemoteImageState extends State<RemoteImage> {
         gaplessPlayback: true,
         cacheWidth: widget.decodeWidth == null ? null : (widget.decodeWidth! * dpr).round(),
         filterQuality: FilterQuality.medium,
-        frameBuilder: (context, child, frame, sync) => sync
-            ? child
-            : AnimatedOpacity(opacity: frame == null ? 0 : 1, duration: const Duration(milliseconds: 220), child: child),
+        frameBuilder: (context, child, frame, sync) =>
+            sync ? child : AnimatedOpacity(opacity: frame == null ? 0 : 1, duration: const Duration(milliseconds: 220), child: child),
         errorBuilder: (_, __, ___) => widget.placeholder ? _failedBox() : const SizedBox.shrink(),
       );
     }
@@ -113,6 +112,8 @@ class _RemoteImageState extends State<RemoteImage> {
     return _failed ? _failedBox() : const Shimmer();
   }
 
-  Widget _failedBox() =>
-      const ColoredBox(color: T.navy2, child: Center(child: Icon(Icons.image_outlined, color: Color(0x998F8BBA), size: 24)));
+  Widget _failedBox() => const ColoredBox(
+    color: T.navy2,
+    child: Center(child: Icon(Icons.image_outlined, color: Color(0x998F8BBA), size: 24)),
+  );
 }

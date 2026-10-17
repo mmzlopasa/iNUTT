@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import '../core/downloads.dart';
 import '../core/feed_engine.dart';
 import '../core/html.dart';
 import '../core/models.dart';
@@ -319,8 +320,23 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
   }
 
   Future<void> _showMedia() async {
+    final items = await _collect();
+    if (items.isEmpty) return _flash('No pictures or videos on this page');
+    HapticFeedback.lightImpact();
+    AppRouter.shared.open(items, 0);
+  }
+
+  /// Every picture and video on the page, downloaded one after another.
+  Future<void> _downloadAll() async {
+    final items = await _collect();
+    if (items.isEmpty) return _flash('No pictures or videos on this page');
+    DownloadManager.shared.downloadAll(items);
+    _flash('Downloading ${items.length} items');
+  }
+
+  Future<List<MediaItem>> _collect() async {
     final c = _web;
-    if (c == null) return;
+    if (c == null) return const [];
     final json = await c.evaluateJavascript(source: _mediaScript);
     final base = _current ?? widget.url;
     final items = <MediaItem>[];
@@ -351,9 +367,7 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
         }
       }
     }
-    if (items.isEmpty) return _flash('No pictures or videos on this page');
-    HapticFeedback.lightImpact();
-    AppRouter.shared.open(items, 0);
+    return items;
   }
 
   /// The page you are on becomes a site, so its media shows up on Home and in Sites.
@@ -464,6 +478,8 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
                 _icon(Icons.chevron_right_rounded, _canForward ? () => _web?.goForward() : null),
                 const Spacer(),
                 _icon(Icons.library_add_rounded, _addAsSite),
+                const SizedBox(width: 8),
+                _icon(Icons.download_rounded, _downloadAll),
                 const SizedBox(width: 12),
                 GoldButton(label: 'Media', icon: Icons.photo_library_rounded, onPressed: _showMedia),
               ],

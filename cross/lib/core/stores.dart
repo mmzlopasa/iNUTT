@@ -157,6 +157,18 @@ class Library extends ChangeNotifier {
 
   bool isFavorite(MediaItem i) => _favIds.contains(i.id);
 
+  /// Used by backup restore. Returns how many were new.
+  int mergeFavorites(List<MediaItem> items) {
+    final fresh = items.where((e) => !_favIds.contains(e.id)).toList();
+    if (fresh.isEmpty) return 0;
+    favorites.addAll(fresh);
+    _favIds.addAll(fresh.map((e) => e.id));
+    favoritesVersion.value++;
+    notifyListeners();
+    Disk.save('favorites.json', favorites.map((e) => e.toJson()).toList());
+    return fresh.length;
+  }
+
   void toggleFavorite(MediaItem item) {
     if (_favIds.remove(item.id)) {
       favorites.removeWhere((e) => e.id == item.id);
@@ -201,13 +213,118 @@ class Library extends ChangeNotifier {
   }
 }
 
+/// Hides items whose title, category or link contains a blocked word.
+class Blocklist {
+  static List<String> _words = const [];
+
+  static void update(List<String> list) => _words = list.map((w) => w.trim().toLowerCase()).where((w) => w.isNotEmpty).toList();
+
+  static bool blocks(MediaItem i) {
+    if (_words.isEmpty) return false;
+    final hay = '${i.title} ${i.categoryName ?? ''} ${i.pageUrl?.path ?? ''} ${i.mediaUrl?.path ?? ''}'.toLowerCase();
+    return _words.any(hay.contains);
+  }
+
+  static List<MediaItem> filter(List<MediaItem> items) => _words.isEmpty ? items : items.where((i) => !blocks(i)).toList();
+}
+
+class MediaCollection {
+  final String id;
+  String name;
+  List<MediaItem> items;
+  MediaCollection({String? id, required this.name, List<MediaItem>? items})
+    : id = id ?? hashKey('${DateTime.now().microsecondsSinceEpoch}$name'),
+      items = items ?? [];
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'items': items.map((e) => e.toJson()).toList()};
+  factory MediaCollection.fromJson(Map<String, dynamic> j) => MediaCollection(
+    id: j['id'] as String?,
+    name: j['name'] as String? ?? 'Collection',
+    items: (j['items'] as List? ?? []).map((e) => MediaItem.fromJson(e as Map<String, dynamic>)).toList(),
+  );
+}
+
+/// Your own folders of saved items, next to Favorites.
+class CollectionStore extends ChangeNotifier {
+  static final CollectionStore shared = CollectionStore._();
+  CollectionStore._();
+
+  List<MediaCollection> collections = [];
+
+  void load() {
+    final raw = Disk.load('collections.json');
+    if (raw is List) collections = raw.map((e) => MediaCollection.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  void _save() {
+    notifyListeners();
+    Disk.save('collections.json', collections.map((c) => c.toJson()).toList());
+  }
+
+  MediaCollection? create(String name, [MediaItem? item]) {
+    final n = name.trim();
+    if (n.isEmpty) return null;
+    final c = MediaCollection(name: n, items: [?item]);
+    collections.add(c);
+    _save();
+    return c;
+  }
+
+  bool contains(MediaItem item, String id) => collections.any((c) => c.id == id && c.items.any((e) => e.id == item.id));
+  bool inAny(MediaItem item) => collections.any((c) => c.items.any((e) => e.id == item.id));
+
+  /// Adds the item, or takes it out when it is already there. Returns true when it was added.
+  bool toggle(MediaItem item, String id) {
+    final c = collections.where((c) => c.id == id).firstOrNull;
+    if (c == null) return false;
+    final had = c.items.any((e) => e.id == item.id);
+    if (had) {
+      c.items.removeWhere((e) => e.id == item.id);
+    } else {
+      c.items.insert(0, item);
+    }
+    _save();
+    return !had;
+  }
+
+  void rename(String id, String name) {
+    final n = name.trim();
+    final c = collections.where((c) => c.id == id).firstOrNull;
+    if (n.isEmpty || c == null) return;
+    c.name = n;
+    _save();
+  }
+
+  void delete(String id) {
+    collections.removeWhere((c) => c.id == id);
+    _save();
+  }
+
+  /// Used by backup restore.
+  void merge(List<MediaCollection> incoming) {
+    for (final c in incoming) {
+      final have = collections.where((e) => e.name.toLowerCase() == c.name.toLowerCase()).firstOrNull;
+      if (have == null) {
+        collections.add(c);
+      } else {
+        final ids = have.items.map((e) => e.id).toSet();
+        have.items.addAll(c.items.where((e) => !ids.contains(e.id)));
+      }
+    }
+    _save();
+  }
+}
+
 class AppSettings extends ChangeNotifier {
   static final AppSettings shared = AppSettings._();
   AppSettings._();
 
   late SharedPreferences _p;
 
-  Future<void> load() async => _p = await SharedPreferences.getInstance();
+  Future<void> load() async {
+    _p = await SharedPreferences.getInstance();
+    Blocklist.update(blockedWords);
+  }
 
   bool _b(String k, bool d) => _p.getBool(k) ?? d;
   void _sb(String k, bool v) {
@@ -243,6 +360,34 @@ class AppSettings extends ChangeNotifier {
   /// Home leaves out what you have already opened.
   bool get hideSeen => _b('hideSeen', false);
   set hideSeen(bool v) => _sb('hideSeen', v);
+
+  /// Words that hide items everywhere.
+  List<String> get blockedWords => _p.getStringList('blockedWords') ?? [];
+  set blockedWords(List<String> v) {
+    _p.setStringList('blockedWords', v);
+    Blocklist.update(v);
+    blocklistVersion.value++;
+    notifyListeners();
+  }
+
+  /// Bumped when blocked words change, so feeds are worked out again.
+  final ValueNotifier<int> blocklistVersion = ValueNotifier(0);
+
+  int get slideshowSeconds => _p.getInt('slideshowSeconds') ?? 5;
+  set slideshowSeconds(int v) {
+    _p.setInt('slideshowSeconds', v);
+    notifyListeners();
+  }
+
+  bool get slideshowRandom => _b('slideshowRandom', false);
+  set slideshowRandom(bool v) => _sb('slideshowRandom', v);
+
+  /// Downloads go into the encrypted vault inside the app instead of the gallery or Downloads.
+  bool get vaultDownloads => _b('vaultDownloads', false);
+  set vaultDownloads(bool v) => _sb('vaultDownloads', v);
+
+  bool get shakeToLock => _b('shakeToLock', false);
+  set shakeToLock(bool v) => _sb('shakeToLock', v);
 
   /// The one link the Reels tab plays from.
   String get reelsSource => _p.getString('reelsSource') ?? '';

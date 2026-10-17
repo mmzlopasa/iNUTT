@@ -73,8 +73,11 @@ class Net {
     Object lastError = NetException('Reddit did not answer.');
     for (final host in ['www.reddit.com', 'old.reddit.com']) {
       try {
-        final r = await fetch(jsonUrl.replace(host: host),
-            ua: redditUserAgent, headers: {'Accept': 'application/json', 'Cookie': 'over18=1'});
+        final r = await fetch(
+          jsonUrl.replace(host: host),
+          ua: redditUserAgent,
+          headers: {'Accept': 'application/json', 'Cookie': 'over18=1'},
+        );
         // Blocked requests come back as an HTML page.
         final first = r.bytes.firstWhere((b) => b != 0x20 && b != 0x0A && b != 0x0D && b != 0x09, orElse: () => 0);
         if (first == 0x7B || first == 0x5B) return r.bytes;
@@ -88,11 +91,11 @@ class Net {
 
   /// Headers the video player should send so hot-link protected media plays.
   static Map<String, String> playerHeaders(Uri? referer) => {
-        'User-Agent': userAgent,
-        if (referer != null) 'Referer': referer.toString(),
-        // CDNs that check where a stream is played from also look at the origin.
-        if (referer != null && referer.hasScheme) 'Origin': '${referer.scheme}://${referer.host}',
-      };
+    'User-Agent': userAgent,
+    if (referer != null) 'Referer': referer.toString(),
+    // CDNs that check where a stream is played from also look at the origin.
+    if (referer != null && referer.hasScheme) 'Origin': '${referer.scheme}://${referer.host}',
+  };
 }
 
 enum RenderPriority { user, background }
@@ -226,8 +229,12 @@ class PageRenderer {
   /// Opens a TikTok-style page off screen, swipes through its feed and collects every video it loads:
   /// `<video>` sources and video files the page requests. `onFound` gets each new batch right away;
   /// `cancelled` stops early.
-  Future<List<CapturedVideo>> captureVideos(Uri url,
-      {int rounds = 10, void Function(List<CapturedVideo>)? onFound, bool Function()? cancelled}) async {
+  Future<List<CapturedVideo>> captureVideos(
+    Uri url, {
+    int rounds = 10,
+    void Function(List<CapturedVideo>)? onFound,
+    bool Function()? cancelled,
+  }) async {
     await _acquire(RenderPriority.user);
     HeadlessInAppWebView? web;
     final found = <CapturedVideo>[];
@@ -301,7 +308,19 @@ class PageRenderer {
   /// Pre-roll and tracking clips that pages load next to the real video.
   static bool isAd(Uri u) {
     final s = u.toString().toLowerCase();
-    const marks = ['/ads/', 'doubleclick', 'googlesyndication', 'imasdk', 'adserver', '/vast', 'preroll', 'pre-roll', 'exoclick', 'trafficjunky', 'juicyads'];
+    const marks = [
+      '/ads/',
+      'doubleclick',
+      'googlesyndication',
+      'imasdk',
+      'adserver',
+      '/vast',
+      'preroll',
+      'pre-roll',
+      'exoclick',
+      'trafficjunky',
+      'juicyads',
+    ];
     return marks.any(s.contains);
   }
 

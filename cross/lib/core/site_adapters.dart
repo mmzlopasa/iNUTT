@@ -113,7 +113,11 @@ class SiteAdapters {
       final key = m[1];
       final raw = m[2];
       if (key == null || raw == null) continue;
-      final label = Html.first('${RegExp.escape(key)}' r'''_text\s*:\s*['"]([^'"]+)['"]''', html);
+      final label = Html.first(
+        '${RegExp.escape(key)}'
+        r'''_text\s*:\s*['"]([^'"]+)['"]''',
+        html,
+      );
       out.add((kvsRealUrl(raw, license), label));
     }
     return out;
@@ -159,7 +163,10 @@ class SiteAdapters {
           final isLink = lower.startsWith('http') || lower.startsWith('/');
           if (video == null &&
               isLink &&
-              (lower.contains('.m3u8') || lower.contains('.mp4') || lower.contains('.webm') || (key.contains('stream') && key.contains('video')))) {
+              (lower.contains('.m3u8') ||
+                  lower.contains('.mp4') ||
+                  lower.contains('.webm') ||
+                  (key.contains('stream') && key.contains('video')))) {
             video = Html.resolve(v, base);
           } else if (image == null &&
               isLink &&
@@ -183,16 +190,18 @@ class SiteAdapters {
       final media = video ?? image;
       if (!seen.add(media.toString())) return;
       final kind = video != null ? MediaKind.video : (MediaKind.guess(image) == MediaKind.gif ? MediaKind.gif : MediaKind.image);
-      result.items.add(MediaItem(
-        siteId: site.id,
-        siteName: site.name,
-        title: Scraper.cleanTitle(title),
-        thumbnailUrl: image,
-        mediaUrl: media,
-        pageUrl: video == null ? page : null,
-        kind: kind,
-        categoryName: categoryName,
-      ));
+      result.items.add(
+        MediaItem(
+          siteId: site.id,
+          siteName: site.name,
+          title: Scraper.cleanTitle(title),
+          thumbnailUrl: image,
+          mediaUrl: media,
+          pageUrl: video == null ? page : null,
+          kind: kind,
+          categoryName: categoryName,
+        ),
+      );
     }
 
     visit(root, 0);
@@ -214,14 +223,17 @@ class SiteAdapters {
 
   static Future<ScrapeResult> fikfapFeed(Site site, String? after) async {
     final url = Uri.https('api.fikfap.com', '/posts', {'amount': '21', 'afterId': ?after});
-    final f = await Net.fetch(url, headers: {
-      HttpHeaders.acceptHeader: 'application/json',
-      'Origin': 'https://fikfap.com',
-      'Referer': 'https://fikfap.com/',
-      'Authorization-Anonymous': _anonymousId,
-      'IsLoggedIn': 'false',
-      'IsPWA': 'false',
-    });
+    final f = await Net.fetch(
+      url,
+      headers: {
+        HttpHeaders.acceptHeader: 'application/json',
+        'Origin': 'https://fikfap.com',
+        'Referer': 'https://fikfap.com/',
+        'Authorization-Anonymous': _anonymousId,
+        'IsLoggedIn': 'false',
+        'IsPWA': 'false',
+      },
+    );
     final posts = jsonDecode(f.text);
     if (posts is! List || posts.isEmpty) throw NetException('The page is empty.');
     final result = ScrapeResult();
@@ -232,16 +244,18 @@ class SiteAdapters {
       final thumb = Uri.tryParse(p['thumbnailStreamUrl'] as String? ?? '');
       final id = p['postId']?.toString();
       if (id != null) lastId = id;
-      result.items.add(MediaItem(
-        id: hashKey(v.toString()),
-        siteId: site.id,
-        siteName: site.name,
-        title: p['label'] as String? ?? '',
-        thumbnailUrl: thumb != null && thumb.hasScheme ? thumb : null,
-        mediaUrl: v,
-        pageUrl: Uri.parse('https://fikfap.com/'),
-        kind: MediaKind.video,
-      ));
+      result.items.add(
+        MediaItem(
+          id: hashKey(v.toString()),
+          siteId: site.id,
+          siteName: site.name,
+          title: p['label'] as String? ?? '',
+          thumbnailUrl: thumb != null && thumb.hasScheme ? thumb : null,
+          mediaUrl: v,
+          pageUrl: Uri.parse('https://fikfap.com/'),
+          kind: MediaKind.video,
+        ),
+      );
     }
     if (result.items.isEmpty) throw NetException('The page is empty.');
     if (lastId != null) result.nextPage = site.url.replace(queryParameters: {'inuttAfter': lastId});

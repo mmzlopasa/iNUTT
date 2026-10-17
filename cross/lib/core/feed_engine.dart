@@ -73,7 +73,10 @@ class FeedEngine extends ChangeNotifier {
 
   static String key(Site site, [SiteCategory? category]) => category == null ? site.id : '${site.id}|${category.url}';
 
-  List<MediaItem> items(Site site, [SiteCategory? category]) => feeds[key(site, category)] ?? const [];
+  List<MediaItem> items(Site site, [SiteCategory? category]) => Blocklist.filter(feeds[key(site, category)] ?? const []);
+
+  /// Blocked words changed: lists are worked out again.
+  void filtersChanged() => _changed();
   bool isLoading(Site site, [SiteCategory? c]) => loading.contains(key(site, c));
   String? error(Site site, [SiteCategory? c]) => errors[key(site, c)];
 
@@ -88,7 +91,7 @@ class FeedEngine extends ChangeNotifier {
   List<MediaItem> homeItems(Site site) {
     final c = _homeCache[site.id];
     if (c != null && c.$1 == _version && identical(c.$2, site.categories)) return c.$3;
-    final items = _computeHomeItems(site);
+    final items = Blocklist.filter(_computeHomeItems(site));
     _homeCache[site.id] = (_version, site.categories, items);
     return items;
   }
@@ -132,7 +135,7 @@ class FeedEngine extends ChangeNotifier {
 
   List<MediaItem> allCachedItems() {
     final seen = <String>{};
-    return feeds.values.expand((e) => e).where((e) => seen.add(e.id)).toList();
+    return Blocklist.filter(feeds.values.expand((e) => e).where((e) => seen.add(e.id)).toList());
   }
 
   bool get isStale => lastRefresh == null || DateTime.now().difference(lastRefresh!) > const Duration(minutes: 8);
@@ -349,7 +352,8 @@ class FeedEngine extends ChangeNotifier {
         staticError = e;
       }
     }
-    final needsRender = site.renderMode == RenderMode.full ||
+    final needsRender =
+        site.renderMode == RenderMode.full ||
         (site.renderMode == RenderMode.auto && result.items.length < 6 && result.categories.length < 6);
     if (staticError != null && !needsRender) throw staticError;
     if (allowRender && needsRender) {
@@ -457,14 +461,17 @@ class FeedEngine extends ChangeNotifier {
   }
 
   Future<ResolvedMedia?> _track(MediaItem item, Future<ResolvedMedia?> f) {
-    final tracked = f.then((r) {
-      _inflight.remove(item.id);
-      if (r != null) _remember(item, r);
-      return r;
-    }, onError: (_) {
-      _inflight.remove(item.id);
-      return null;
-    });
+    final tracked = f.then(
+      (r) {
+        _inflight.remove(item.id);
+        if (r != null) _remember(item, r);
+        return r;
+      },
+      onError: (_) {
+        _inflight.remove(item.id);
+        return null;
+      },
+    );
     _inflight[item.id] = tracked;
     return tracked;
   }
@@ -531,7 +538,8 @@ class FeedEngine extends ChangeNotifier {
         final posts = (await _parseRedditOff(data, page, site ?? Site(name: item.siteName, url: page), null)).items;
         if (posts.isEmpty) return null;
         final p = posts.first;
-        if (p.gallery != null && p.gallery!.length > 1) return ResolvedMedia(url: p.gallery!.first, kind: MediaKind.image, gallery: p.gallery!);
+        if (p.gallery != null && p.gallery!.length > 1)
+          return ResolvedMedia(url: p.gallery!.first, kind: MediaKind.image, gallery: p.gallery!);
         if (p.mediaUrl != null) return ResolvedMedia(url: p.mediaUrl!, kind: p.kind, referer: page);
         return null;
       }
@@ -552,7 +560,11 @@ class FeedEngine extends ChangeNotifier {
         // Returns as soon as the page shows its video, not when the whole page is done.
         final (video, html) = await PageRenderer.shared.renderMedia(page);
         if (video != null) {
-          return ResolvedMedia(url: video.url, kind: MediaKind.guess(video.url) == MediaKind.gif ? MediaKind.gif : MediaKind.video, referer: page);
+          return ResolvedMedia(
+            url: video.url,
+            kind: MediaKind.guess(video.url) == MediaKind.gif ? MediaKind.gif : MediaKind.video,
+            referer: page,
+          );
         }
         if (html != null) {
           final r2 = await _resolveDetailOff(html, page, maxQ);

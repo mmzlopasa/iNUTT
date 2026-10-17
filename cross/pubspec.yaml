@@ -46,6 +46,11 @@ dependencies:
   media_kit_libs_video: ^1.0.7
   flutter_inappwebview: ^6.1.5
   gal: ^2.3.3
+  cryptography: ^2.9.0
+  sensors_plus: ^7.1.1
+  android_intent_plus: ^6.1.0
+  file_picker: ^13.1.0
+  share_plus: ^13.3.1
 
 dev_dependencies:
   flutter_test:

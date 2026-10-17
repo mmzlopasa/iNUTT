@@ -79,7 +79,9 @@ class ReelsStore extends ChangeNotifier {
     try {
       r = await FeedEngine.fetchListing(site.url, site.url, site, null);
     } catch (_) {}
-    final strong = (r?.items ?? []).where((i) => !i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif || i.duration != null));
+    final strong = (r?.items ?? []).where(
+      (i) => !i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif || i.duration != null),
+    );
 
     var list = <MediaItem>[];
     Uri? nextPage;
@@ -173,16 +175,16 @@ class ReelsStore extends ChangeNotifier {
 
   Future<List<MediaItem>> _capture(Site site, int rounds) async {
     MediaItem item(CapturedVideo v) => MediaItem(
-          // Every video comes from the same page; tell them apart by their file.
-          id: hashKey(v.url.toString()),
-          siteId: site.id,
-          siteName: site.name,
-          title: v.title,
-          thumbnailUrl: v.poster,
-          mediaUrl: v.url,
-          pageUrl: site.url,
-          kind: MediaKind.video,
-        );
+      // Every video comes from the same page; tell them apart by their file.
+      id: hashKey(v.url.toString()),
+      siteId: site.id,
+      siteName: site.name,
+      title: v.title,
+      thumbnailUrl: v.poster,
+      mediaUrl: v.url,
+      pageUrl: site.url,
+      kind: MediaKind.video,
+    );
     final found = await PageRenderer.shared.captureVideos(
       site.url,
       rounds: rounds,
@@ -190,7 +192,7 @@ class ReelsStore extends ChangeNotifier {
       onFound: (batch) {
         final s = _streamSource;
         if (s == null || s != AppSettings.shared.reelsSource) return;
-        final fresh = batch.map(item).toList();
+        final fresh = Blocklist.filter(batch.map(item).toList());
         _streamed = [..._streamed, ...fresh];
         // The first video of a fresh load replaces what was shown before.
         if (_streamFresh) {
@@ -211,19 +213,21 @@ class ReelsStore extends ChangeNotifier {
   /// Videos, GIFs, and post links that may hold one, from any site. Post links are treated as
   /// videos so resolving them renders the page until its video shows up. Plain pictures are left out.
   static List<MediaItem> reels(List<MediaItem> items) => [
-        for (final i in items)
-          if (!i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif))
-            i
-          else if (!i.isListing && i.mediaUrl == null && i.pageUrl != null)
-            (i..kind = MediaKind.video),
-      ];
+    for (final i in Blocklist.filter(items))
+      if (!i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif))
+        i
+      else if (!i.isListing && i.mediaUrl == null && i.pageUrl != null)
+        (i..kind = MediaKind.video),
+  ];
 
-  void _save() => unawaited(Disk.save('reels.json', {
-        'source': _loadedSource,
-        'items': items.take(300).map((e) => e.toJson()).toList(),
-        'next': _next?.toString(),
-        'rounds': _rounds,
-      }));
+  void _save() => unawaited(
+    Disk.save('reels.json', {
+      'source': _loadedSource,
+      'items': items.take(300).map((e) => e.toJson()).toList(),
+      'next': _next?.toString(),
+      'rounds': _rounds,
+    }),
+  );
 }
 
 /// TikTok-style feed: one full-screen video at a time, swipe up for the next.
@@ -282,113 +286,138 @@ class _ReelsViewState extends State<ReelsView> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: ReelsStore.shared,
-        builder: (context, _) {
-          final store = ReelsStore.shared;
-          Widget body;
-          if (store.sourceUrl == null) {
-            body = _setup(context);
-          } else if (store.items.isEmpty) {
-            body = store.loading
-                ? Center(
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      const CircularProgressIndicator(color: T.gold),
-                      const SizedBox(height: 14),
-                      Text('Loading reels…', style: T.text(14, weight: FontWeight.w500, color: T.muted)),
-                    ]),
-                  )
-                : Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        EmptyState(
-                          icon: Icons.smart_display_rounded,
-                          title: 'No reels',
-                          message: store.error ?? 'Nothing to play yet.',
-                          buttonTitle: 'Try again',
-                          onButton: store.refresh,
-                        ),
-                        const SizedBox(height: 14),
-                        GhostButton(label: 'Change source', onPressed: () => _editSource(context)),
-                      ]),
+    listenable: ReelsStore.shared,
+    builder: (context, _) {
+      final store = ReelsStore.shared;
+      Widget body;
+      if (store.sourceUrl == null) {
+        body = _setup(context);
+      } else if (store.items.isEmpty) {
+        body = store.loading
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(color: T.gold),
+                    const SizedBox(height: 14),
+                    Text(
+                      'Loading reels…',
+                      style: T.text(14, weight: FontWeight.w500, color: T.muted),
                     ),
-                  );
-          } else {
-            body = Stack(children: [
-              PageView.builder(
-                controller: _page,
-                scrollDirection: Axis.vertical,
-                allowImplicitScrolling: true,
-                itemCount: store.items.length,
-                onPageChanged: (i) {
-                  HapticFeedback.selectionClick();
-                  setState(() => _index = i);
-                  if (i >= store.items.length - 4) unawaited(store.loadMore());
-                },
-                itemBuilder: (context, i) => ReelPage(
-                  key: ValueKey(store.items[i].id),
-                  item: store.items[i],
-                  active: _active && i == _index,
-                  onEnded: () {
-                    if (!_page.hasClients || i != _index || i + 1 >= store.items.length) return;
-                    _page.nextPage(duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
-                  },
+                  ],
                 ),
+              )
+            : Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      EmptyState(
+                        icon: Icons.smart_display_rounded,
+                        title: 'No reels',
+                        message: store.error ?? 'Nothing to play yet.',
+                        buttonTitle: 'Try again',
+                        onButton: store.refresh,
+                      ),
+                      const SizedBox(height: 14),
+                      GhostButton(label: 'Change source', onPressed: () => _editSource(context)),
+                    ],
+                  ),
+                ),
+              );
+      } else {
+        body = Stack(
+          children: [
+            PageView.builder(
+              controller: _page,
+              scrollDirection: Axis.vertical,
+              allowImplicitScrolling: true,
+              itemCount: store.items.length,
+              onPageChanged: (i) {
+                HapticFeedback.selectionClick();
+                setState(() => _index = i);
+                if (i >= store.items.length - 4) unawaited(store.loadMore());
+              },
+              itemBuilder: (context, i) => ReelPage(
+                key: ValueKey(store.items[i].id),
+                item: store.items[i],
+                active: _active && i == _index,
+                onEnded: () {
+                  if (!_page.hasClients || i != _index || i + 1 >= store.items.length) return;
+                  _page.nextPage(duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
+                },
               ),
-              _topBar(context),
-            ]);
-          }
-          return ColoredBox(color: Colors.black, child: body);
-        },
-      );
+            ),
+            _topBar(context),
+          ],
+        );
+      }
+      return ColoredBox(color: Colors.black, child: body);
+    },
+  );
 
   Widget _topBar(BuildContext context) => Positioned(
-        top: MediaQuery.paddingOf(context).top + 4,
-        left: 16,
-        right: 16,
-        child: Row(children: [
-          Text('Reels', style: T.display(20, weight: FontWeight.w700, color: Colors.white)),
-          const Spacer(),
-          _RoundButton(icon: Icons.tune_rounded, onTap: () => _editSource(context)),
-        ]),
-      );
+    top: MediaQuery.paddingOf(context).top + 4,
+    left: 16,
+    right: 16,
+    child: Row(
+      children: [
+        Text(
+          'Reels',
+          style: T.display(20, weight: FontWeight.w700, color: Colors.white),
+        ),
+        const Spacer(),
+        _RoundButton(icon: Icons.tune_rounded, onTap: () => _editSource(context)),
+      ],
+    ),
+  );
 
   Widget _setup(BuildContext context) => Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const EmptyState(
-                icon: Icons.smart_display_rounded,
-                title: 'Reels',
-                message: 'Add one link with short videos. They play full screen; swipe up for the next one.',
-              ),
-              const SizedBox(height: 16),
-              const _SourceField(),
-            ]),
-          ),
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const EmptyState(
+              icon: Icons.smart_display_rounded,
+              title: 'Reels',
+              message: 'Add one link with short videos. They play full screen; swipe up for the next one.',
+            ),
+            const SizedBox(height: 16),
+            const _SourceField(),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 
   void _editSource(BuildContext context) => showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        useRootNavigator: true,
-        backgroundColor: T.bg,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-        builder: (context) => Padding(
-          padding: EdgeInsets.fromLTRB(16, 20, 16, MediaQuery.viewInsetsOf(context).bottom + 24),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Reels source', style: T.display(18, weight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Text('One link to any site with short videos. A few sites, like TikTok and Instagram, block apps from reading their feed.',
-                style: T.text(13, color: T.muted)),
-            const SizedBox(height: 14),
-            const _SourceField(closeOnSave: true),
-          ]),
-        ),
-      );
+    context: context,
+    isScrollControlled: true,
+    useRootNavigator: true,
+    backgroundColor: T.bg,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    builder: (context) => Padding(
+      padding: EdgeInsets.fromLTRB(16, 20, 16, MediaQuery.viewInsetsOf(context).bottom + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Reels source', style: T.display(18, weight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Text(
+            'One link to any site with short videos. A few sites, like TikTok and Instagram, block apps from reading their feed.',
+            style: T.text(13, color: T.muted),
+          ),
+          const SizedBox(height: 14),
+          const _SourceField(closeOnSave: true),
+        ],
+      ),
+    ),
+  );
 }
 
 class _SourceField extends StatefulWidget {
@@ -417,28 +446,40 @@ class _SourceFieldState extends State<_SourceField> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        TextField(
-          controller: _text,
-          autocorrect: false,
-          keyboardType: TextInputType.url,
-          style: T.mono(14, color: T.ink),
-          onChanged: (_) => setState(() {}),
-          onSubmitted: (_) => _save(),
-          decoration: InputDecoration(
-            hintText: 'any video site or r/subreddit',
-            hintStyle: T.mono(14, color: T.muted),
-            filled: true,
-            fillColor: Colors.white.withValues(alpha: 0.06),
-            contentPadding: const EdgeInsets.all(14),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: T.line2)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: T.line2)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: T.gold)),
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      TextField(
+        controller: _text,
+        autocorrect: false,
+        keyboardType: TextInputType.url,
+        style: T.mono(14, color: T.ink),
+        onChanged: (_) => setState(() {}),
+        onSubmitted: (_) => _save(),
+        decoration: InputDecoration(
+          hintText: 'any video site or r/subreddit',
+          hintStyle: T.mono(14, color: T.muted),
+          filled: true,
+          fillColor: Colors.white.withValues(alpha: 0.06),
+          contentPadding: const EdgeInsets.all(14),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: T.line2),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: T.line2),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: T.gold),
           ),
         ),
-        const SizedBox(height: 12),
-        GoldButton(label: 'Use this source', onPressed: _valid ? _save : null),
-      ]);
+      ),
+      const SizedBox(height: 12),
+      GoldButton(label: 'Use this source', onPressed: _valid ? _save : null),
+    ],
+  );
 }
 
 /// One reel: a full-screen video that fills the screen, with its title and actions on top.
@@ -497,15 +538,19 @@ class _ReelPageState extends State<ReelPage> {
 
   /// Keeps the poster up until the first frame, and shows the error instead of a black screen.
   void _watch(Player p) {
-    _subs.add(p.stream.width.listen((w) {
-      if (w != null && w > 0 && !_ready && mounted) {
-        _giveUp?.cancel();
-        setState(() => _ready = true);
-      }
-    }));
-    _subs.add(p.stream.error.listen((_) {
-      if (!_ready && mounted) setState(() => _failed = true);
-    }));
+    _subs.add(
+      p.stream.width.listen((w) {
+        if (w != null && w > 0 && !_ready && mounted) {
+          _giveUp?.cancel();
+          setState(() => _ready = true);
+        }
+      }),
+    );
+    _subs.add(
+      p.stream.error.listen((_) {
+        if (!_ready && mounted) setState(() => _failed = true);
+      }),
+    );
     _giveUp = Timer(const Duration(seconds: 16), () {
       if (!_ready && mounted) setState(() => _failed = true);
     });
@@ -525,14 +570,16 @@ class _ReelPageState extends State<ReelPage> {
     _watch(p);
     final autoNext = AppSettings.shared.reelsAutoNext;
     if (autoNext) {
-      _subs.add(p.stream.completed.listen((done) {
-        if (!done || !mounted) return;
-        if (widget.active && widget.onEnded != null) {
-          widget.onEnded!();
-        } else {
-          p.seek(Duration.zero);
-        }
-      }));
+      _subs.add(
+        p.stream.completed.listen((done) {
+          if (!done || !mounted) return;
+          if (widget.active && widget.onEnded != null) {
+            widget.onEnded!();
+          } else {
+            p.seek(Duration.zero);
+          }
+        }),
+      );
     }
     await p.setPlaylistMode(autoNext ? PlaylistMode.none : PlaylistMode.single);
     if (_muted) await p.setVolume(0);
@@ -573,81 +620,111 @@ class _ReelPageState extends State<ReelPage> {
     final r = _resolved;
     Widget media;
     if (_video != null && !_failed) {
-      media = Stack(fit: StackFit.expand, children: [
-        Video(controller: _video!, fit: BoxFit.cover, fill: Colors.black, controls: NoVideoControls),
-        // The poster stays on top until the first frame, so a reel is never a black screen.
-        if (!_ready) ...[
-          if (item.thumbnailUrl != null)
-            RemoteImage(url: item.thumbnailUrl, referer: item.referer, fit: BoxFit.cover, placeholder: false, decodeWidth: 600),
-          const Center(child: CircularProgressIndicator(strokeWidth: 2.5, color: T.gold)),
+      media = Stack(
+        fit: StackFit.expand,
+        children: [
+          Video(controller: _video!, fit: BoxFit.cover, fill: Colors.black, controls: NoVideoControls),
+          // The poster stays on top until the first frame, so a reel is never a black screen.
+          if (!_ready) ...[
+            if (item.thumbnailUrl != null)
+              RemoteImage(url: item.thumbnailUrl, referer: item.referer, fit: BoxFit.cover, placeholder: false, decodeWidth: 600),
+            const Center(child: CircularProgressIndicator(strokeWidth: 2.5, color: T.gold)),
+          ],
         ],
-      ]);
+      );
     } else if (r != null && r.kind != MediaKind.video) {
       media = RemoteImage(url: r.url, referer: r.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 900);
     } else {
-      media = Stack(fit: StackFit.expand, children: [
-        if (item.thumbnailUrl != null)
-          RemoteImage(url: item.thumbnailUrl, referer: item.referer, fit: BoxFit.cover, placeholder: false, decodeWidth: 600),
-        Center(
-          child: _failed
-              ? Text('Couldn\'t play this one. Swipe up for the next.', style: T.text(14, color: T.body), textAlign: TextAlign.center)
-              : const CircularProgressIndicator(strokeWidth: 2.5, color: T.gold),
-        ),
-      ]);
+      media = Stack(
+        fit: StackFit.expand,
+        children: [
+          if (item.thumbnailUrl != null)
+            RemoteImage(url: item.thumbnailUrl, referer: item.referer, fit: BoxFit.cover, placeholder: false, decodeWidth: 600),
+          Center(
+            child: _failed
+                ? Text(
+                    'Couldn\'t play this one. Swipe up for the next.',
+                    style: T.text(14, color: T.body),
+                    textAlign: TextAlign.center,
+                  )
+                : const CircularProgressIndicator(strokeWidth: 2.5, color: T.gold),
+          ),
+        ],
+      );
     }
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: _togglePause,
-      child: Stack(fit: StackFit.expand, children: [
-        const ColoredBox(color: Colors.black),
-        media,
-        if (_paused) Center(child: Icon(Icons.play_arrow_rounded, size: 72, color: Colors.white.withValues(alpha: 0.85))),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: DecoratedBox(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Color(0x8C000000)]),
-            ),
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(16, 80, 16, MediaQuery.paddingOf(context).bottom + 96),
-              child: ListenableBuilder(
-                listenable: Library.shared,
-                builder: (context, _) {
-                  final fav = Library.shared.isFavorite(item);
-                  return Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    Expanded(
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                        Text(item.siteName.toUpperCase(), style: T.mono(10, color: T.gold, spacing: 1)),
-                        if (item.title.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Text(item.title,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: T.text(15, weight: FontWeight.w500, color: Colors.white)),
-                        ],
-                      ]),
-                    ),
-                    const SizedBox(width: 12),
-                    Column(mainAxisSize: MainAxisSize.min, children: [
-                      _RoundButton(
-                          icon: fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                          on: fav,
-                          size: 48,
-                          onTap: () => Library.shared.toggleFavorite(item)),
-                      const SizedBox(height: 16),
-                      _RoundButton(icon: Icons.download_rounded, size: 48, onTap: () => DownloadManager.shared.download(item)),
-                      const SizedBox(height: 16),
-                      _RoundButton(icon: _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded, size: 48, onTap: _toggleMute),
-                    ]),
-                  ]);
-                },
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const ColoredBox(color: Colors.black),
+          media,
+          if (_paused) Center(child: Icon(Icons.play_arrow_rounded, size: 72, color: Colors.white.withValues(alpha: 0.85))),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: DecoratedBox(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Color(0x8C000000)],
+                ),
+              ),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(16, 80, 16, MediaQuery.paddingOf(context).bottom + 96),
+                child: ListenableBuilder(
+                  listenable: Library.shared,
+                  builder: (context, _) {
+                    final fav = Library.shared.isFavorite(item);
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(item.siteName.toUpperCase(), style: T.mono(10, color: T.gold, spacing: 1)),
+                              if (item.title.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  item.title,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: T.text(15, weight: FontWeight.w500, color: Colors.white),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _RoundButton(
+                              icon: fav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                              on: fav,
+                              size: 48,
+                              onTap: () => Library.shared.toggleFavorite(item),
+                            ),
+                            const SizedBox(height: 16),
+                            _RoundButton(icon: Icons.download_rounded, size: 48, onTap: () => DownloadManager.shared.download(item)),
+                            const SizedBox(height: 16),
+                            _RoundButton(icon: _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded, size: 48, onTap: _toggleMute),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 }
@@ -661,12 +738,12 @@ class _RoundButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Pressable(
-        onTap: onTap,
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withValues(alpha: 0.32)),
-          child: Icon(icon, size: size * 0.5, color: on ? T.gold : Colors.white),
-        ),
-      );
+    onTap: onTap,
+    child: Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withValues(alpha: 0.32)),
+      child: Icon(icon, size: size * 0.5, color: on ? T.gold : Colors.white),
+    ),
+  );
 }

@@ -32,9 +32,21 @@ class Html {
   }
 
   static const _named = {
-    '&amp;': '&', '&quot;': '"', '&#39;': "'", '&apos;': "'", '&lt;': '<', '&gt;': '>',
-    '&nbsp;': ' ', '&#039;': "'", '&ndash;': '–', '&mdash;': '—', '&hellip;': '…',
-    '&rsquo;': '’', '&lsquo;': '‘', '&ldquo;': '“', '&rdquo;': '”',
+    '&amp;': '&',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&apos;': "'",
+    '&lt;': '<',
+    '&gt;': '>',
+    '&nbsp;': ' ',
+    '&#039;': "'",
+    '&ndash;': '–',
+    '&mdash;': '—',
+    '&hellip;': '…',
+    '&rsquo;': '’',
+    '&lsquo;': '‘',
+    '&ldquo;': '“',
+    '&rdquo;': '”',
   };
 
   static String decodeEntities(String s) {
