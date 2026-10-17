@@ -82,6 +82,19 @@ jobs:
           }
           Get-ChildItem ..\out\iNUTT | Format-Table Name
           Compress-Archive -Path ..\out\iNUTT -DestinationPath ..\iNUTT-windows.zip -Force
+      - name: Smoke test (the app must still be running after 25 s)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $p = Start-Process -FilePath ..\out\iNUTT\iNUTT.exe -PassThru
+          Start-Sleep -Seconds 25
+          Get-Process | Where-Object { $_.ProcessName -like 'iNUTT*' } | Format-Table Id, ProcessName, Path, MainWindowTitle -AutoSize
+          Get-ChildItem -Path $env:APPDATA, $env:LOCALAPPDATA -Recurse -Filter startup.log -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName }
+          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-3) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'iNUTT' } | Format-List TimeCreated, ProviderName, Id, Message
+          $alive = Get-Process -Name iNUTT -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\app\iNUTT.exe' }
+          Get-Process -Name iNUTT -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $alive) { Write-Error 'iNUTT exited during start-up' }
       - uses: actions/upload-artifact@v4
         with:
           name: windows
