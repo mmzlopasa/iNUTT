@@ -69,7 +69,7 @@ jobs:
         working-directory: cross/windows/launcher
         run: |
           rc /nologo /fo launcher.res launcher.rc || exit /b 1
-          cl /nologo /O2 /EHsc /std:c++17 /DUNICODE /D_UNICODE launcher.cpp launcher.res /Fe:iNUTT.exe /link /SUBSYSTEM:WINDOWS user32.lib shell32.lib || exit /b 1
+          cl /nologo /O2 /EHsc /std:c++17 /DUNICODE /D_UNICODE launcher.cpp launcher.res /Fe:iNUTT.exe /link /SUBSYSTEM:WINDOWS user32.lib shell32.lib ole32.lib || exit /b 1
       - name: Package
         shell: pwsh
         run: |
