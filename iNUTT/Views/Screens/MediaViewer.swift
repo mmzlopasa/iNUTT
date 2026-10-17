@@ -290,7 +290,7 @@ struct MediaViewer: View {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 150_000_000)
                     guard let a = loopA, let b = loopB, let p = player else { continue }
-                    if p.currentTime().seconds >= b { p.seek(to: CMTime(seconds: a, preferredTimescale: 600)) }
+                    if p.currentTime().seconds >= b { _ = await p.seek(to: CMTime(seconds: a, preferredTimescale: 600)) }
                 }
             }
         } else {
