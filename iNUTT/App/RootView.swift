@@ -83,12 +83,18 @@ struct RootView: View {
             updateLock(phase: p)
             // Face ID can't run while the app is in the background; ask again when it is back.
             if p == .active && lock.isLocked { Task { await lock.authenticateBiometric() } }
+            if p == .active {
+                UIApplication.shared.applicationIconBadgeNumber = 0
+                OfflineStore.shared.sync()
+            }
         }
         .task {
             guard !didStart else { return }
             didStart = true
+            await CookieSync.pull()
             engine.scheduleBackgroundRefresh()
             downloads.resumeQueue()
+            OfflineStore.shared.sync()
             if engine.isStale { await engine.refreshAll() }
         }
     }

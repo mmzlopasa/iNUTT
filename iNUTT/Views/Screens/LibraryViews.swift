@@ -13,8 +13,13 @@ struct FavoritesView: View {
     @State private var name = ""
     @State private var showVault = false
     @State private var confirmDelete: MediaCollection?
+    @State private var showLater = false
+    @ObservedObject private var later = WatchLater.shared
+    @ObservedObject private var offline = OfflineStore.shared
+    @ObservedObject private var settings = AppSettings.shared
 
     private var source: [MediaItem] {
+        if showLater { return later.items }
         if let selected, let c = collections.collections.first(where: { $0.id == selected }) { return c.items }
         return library.favorites
     }
@@ -30,7 +35,7 @@ struct FavoritesView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(selected == nil ? "FAVORITES" : "COLLECTION").font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
+                            Text(showLater ? "WATCH LATER" : (selected == nil ? "FAVORITES" : "COLLECTION")).font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
                             Text("\(source.count)").font(Theme.dot(34)).foregroundStyle(Theme.goldGradient)
                         }
                         Spacer()
@@ -45,10 +50,11 @@ struct FavoritesView: View {
                     collectionBar
                     KindFilterBar(filter: $filter)
                     if items.isEmpty {
-                        EmptyStateView(symbol: selected == nil ? "heart" : "folder",
-                                       title: selected == nil ? "No favorites yet" : "This collection is empty",
-                                       message: selected == nil ? "Tap the heart in the viewer or long-press a card."
-                                           : "Add items with the folder button in the viewer or by long-pressing a card.")
+                        EmptyStateView(symbol: showLater ? "clock" : (selected == nil ? "heart" : "folder"),
+                                       title: showLater ? "Nothing in Watch later" : (selected == nil ? "No favorites yet" : "This collection is empty"),
+                                       message: showLater ? "Tap the clock in the viewer or long-press a card. Items leave the queue once you have watched them."
+                                           : (selected == nil ? "Tap the heart in the viewer or long-press a card."
+                                           : "Add items with the folder button in the viewer or by long-pressing a card."))
                             .padding(.horizontal, 16)
                     } else {
                         MediaGrid(items: items).padding(.horizontal, 16)
@@ -88,10 +94,22 @@ struct FavoritesView: View {
     private var collectionBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                chip("All favorites", symbol: "heart.fill", on: selected == nil) { selected = nil }
+                chip("All favorites", symbol: "heart.fill", on: selected == nil && !showLater) { selected = nil; showLater = false }
+                    .contextMenu {
+                        Button { settings.offlineFavorites.toggle(); offline.sync() } label: {
+                            Label(settings.offlineFavorites ? "Don't keep offline" : "Keep offline (Wi-Fi)",
+                                  systemImage: settings.offlineFavorites ? "icloud.slash" : "arrow.down.circle")
+                        }
+                    }
+                chip("Watch later · \(later.items.count)", symbol: "clock.fill", on: showLater) { selected = nil; showLater = true }
                 ForEach(collections.collections) { c in
-                    chip("\(c.name) · \(c.items.count)", symbol: "folder.fill", on: selected == c.id) { selected = c.id }
+                    chip("\(c.name) · \(c.items.count)", symbol: offline.isOfflineCollection(c.id) ? "arrow.down.circle.fill" : "folder.fill",
+                         on: selected == c.id && !showLater) { selected = c.id; showLater = false }
                         .contextMenu {
+                            Button { offline.toggleCollection(c.id) } label: {
+                                Label(offline.isOfflineCollection(c.id) ? "Don't keep offline" : "Keep offline (Wi-Fi)",
+                                      systemImage: offline.isOfflineCollection(c.id) ? "icloud.slash" : "arrow.down.circle")
+                            }
                             Button { name = c.name; renaming = c } label: { Label("Rename", systemImage: "pencil") }
                             Button(role: .destructive) { confirmDelete = c } label: { Label("Delete", systemImage: "trash") }
                         }

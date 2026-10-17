@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 /// Loading placeholder. The moving highlight is a Core Animation layer, so dozens of them
 /// cost the app nothing while scrolling.
@@ -184,6 +185,13 @@ struct MediaContextMenu: View {
                   systemImage: library.isFavorite(item) ? "heart.slash" : "heart")
         }
         Button {
+            WatchLater.shared.toggle(item)
+            WatchLater.shared.flush()
+        } label: {
+            Label(WatchLater.shared.contains(item) ? "Remove from Watch later" : "Watch later",
+                  systemImage: WatchLater.shared.contains(item) ? "clock.badge.xmark" : "clock")
+        }
+        Button {
             Task { await DownloadManager.shared.download(item) }
         } label: {
             Label("Download", systemImage: "arrow.down.circle")
@@ -237,7 +245,7 @@ struct MediaGrid: View {
                     MediaCard(item: item, aspect: aspect)
                 }
                 .buttonStyle(CardPressStyle())
-                .contextMenu { MediaContextMenu(item: item) }
+                .contextMenu { MediaContextMenu(item: item) } preview: { MediaPreview(item: item) }
                 .onAppear {
                     if idx >= items.count - 6 { onReachEnd?() }
                     // Warm the next screenful of thumbnails while scrolling.
@@ -304,5 +312,74 @@ struct ToastView: View {
         }
         .overlay(Capsule().strokeBorder(Theme.edge, lineWidth: 0.8))
         .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
+    }
+}
+
+/// What a long-press shows above the menu: the video playing silently, or the picture larger.
+struct MediaPreview: View {
+    let item: MediaItem
+    @State private var player: AVPlayer?
+    @State private var full: URL?
+    @State private var referer: URL?
+
+    private var size: CGSize {
+        item.kind == .video ? CGSize(width: 340, height: 210) : CGSize(width: 300, height: 380)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black
+            RemoteImage(url: item.thumbnailURL, referer: item.referer, maxPixel: 800, contentMode: .fit, showsPlaceholder: false)
+            if let full {
+                RemoteImage(url: full, referer: referer, maxPixel: 1400, contentMode: .fit, showsPlaceholder: false)
+            }
+            if let player {
+                PlayerLayerView(player: player)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .task {
+            guard let r = await FeedEngine.shared.resolve(item), !r.isListing else { return }
+            if r.kind == .video {
+                let asset = AVURLAsset(url: r.url, options: Net.avHeaders(referer: r.referer, url: r.url))
+                let p = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+                p.isMuted = true
+                p.automaticallyWaitsToMinimizeStalling = false
+                if let at = ResumeStore.shared.position(for: item.id) {
+                    _ = await p.seek(to: CMTime(seconds: at, preferredTimescale: 600))
+                }
+                player = p
+                p.play()
+            } else if r.gallery.count <= 1 {
+                referer = r.referer
+                full = r.url
+            }
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+    }
+}
+
+/// A bare video surface without controls.
+struct PlayerLayerView: UIViewRepresentable {
+    let player: AVPlayer
+
+    final class LayerView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+
+    func makeUIView(context: Context) -> LayerView {
+        let v = LayerView()
+        v.playerLayer.videoGravity = .resizeAspect
+        v.playerLayer.player = player
+        v.backgroundColor = .clear
+        return v
+    }
+
+    func updateUIView(_ v: LayerView, context: Context) {
+        if v.playerLayer.player !== player { v.playerLayer.player = player }
     }
 }

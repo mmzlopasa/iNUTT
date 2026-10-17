@@ -10,6 +10,7 @@ struct MediaViewer: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var downloads: DownloadManager
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var viewer: ViewerState
     @State private var browser: BrowserTarget?
     @ObservedObject private var collections = CollectionStore.shared
     @ObservedObject private var settings = AppSettings.shared
@@ -22,6 +23,11 @@ struct MediaViewer: View {
     @State private var loopA: Double?
     @State private var loopB: Double?
     @State private var loopTask: Task<Void, Never>?
+    @ObservedObject private var later = WatchLater.shared
+    @State private var showSimilar = false
+    @State private var nested: ViewerPresentation?
+    /// Pictures looked at here; they leave Watch later when the viewer closes.
+    @State private var looked = Set<String>()
 
     init(items: [MediaItem], startIndex: Int) {
         self.items = items
@@ -35,6 +41,12 @@ struct MediaViewer: View {
             Color.black
                 .opacity(1 - min(Double(abs(dragY)) / 500.0, 0.7))
                 .ignoresSafeArea()
+                .sheet(isPresented: $showSimilar) {
+                    SimilarSheet(item: current) { list, i in
+                        showSimilar = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { nested = ViewerPresentation(items: list, index: i) }
+                    }
+                }
 
             TabView(selection: $index) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
@@ -47,6 +59,13 @@ struct MediaViewer: View {
             .offset(y: dragY)
             .scaleEffect(1 - min(abs(dragY) / CGFloat(2000), CGFloat(0.12)))
             .simultaneousGesture(dismissDrag)
+            .fullScreenCover(item: $nested) { p in
+                MediaViewer(items: p.items, startIndex: p.index)
+                    .environmentObject(library)
+                    .environmentObject(downloads)
+                    .environmentObject(viewer)
+                    .environmentObject(AppSettings.shared)
+            }
 
             if chrome {
                 VStack(spacing: 0) {
@@ -73,9 +92,11 @@ struct MediaViewer: View {
         .onAppear {
             library.holdUpdates()
             library.record(current)
+            markLooked()
             Preloader.shared.preload(around: index, in: items)
         }
         .onDisappear {
+            WatchLater.shared.remove(ids: looked)
             library.releaseUpdates()
             slideTask?.cancel()
             loopTask?.cancel()
@@ -107,12 +128,17 @@ struct MediaViewer: View {
             clearLoop()
             rate = 1
             library.record(current)
+            markLooked()
             Preloader.shared.preload(around: i, in: items)
             UISelectionFeedbackGenerator().selectionChanged()
         }
     }
 
     private func toggleChrome() { chrome.toggle() }
+
+    private func markLooked() {
+        if !isVideo && later.contains(current) { looked.insert(current.id) }
+    }
 
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 24)
@@ -146,6 +172,15 @@ struct MediaViewer: View {
                 }
             }
             Spacer()
+            Button { showSimilar = true } label: {
+                Image(systemName: "rectangle.stack.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(.ultraThinMaterial))
+                    .overlay(Circle().strokeBorder(Theme.edge, lineWidth: 0.8))
+            }
+            .accessibilityLabel("Similar")
             Button { toggleSlideshow() } label: {
                 Image(systemName: slideshow ? "pause.fill" : "play.square.stack.fill")
                     .font(.system(size: 14, weight: .bold))
@@ -173,16 +208,25 @@ struct MediaViewer: View {
 
     private var bottomBar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !current.title.isEmpty {
-                Text(current.title)
-                    .font(Theme.text(15, .medium))
-                    .foregroundStyle(.white)
-                    .lineLimit(3)
+            HStack(alignment: .top, spacing: 8) {
+                KindBadge(item: current)
+                if !current.title.isEmpty {
+                    Text(current.title)
+                        .font(Theme.text(15, .medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(3)
+                }
             }
             if isVideo { videoControls }
             HStack(spacing: 12) {
-                KindBadge(item: current)
                 Spacer()
+                actionButton(later.contains(current) ? "clock.fill" : "clock", active: later.contains(current)) {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    let on = !later.contains(current)
+                    later.toggle(current)
+                    later.flush()
+                    downloads.show(on ? "Added to Watch later" : "Removed from Watch later", symbol: "clock.fill")
+                }
                 actionButton("folder.badge.plus", active: collections.collections.contains { $0.items.contains { $0.id == current.id } }) {
                     pickCollection = true
                 }
@@ -371,6 +415,8 @@ struct MediaPage: View {
     @State private var player: AVPlayer?
     @State private var failed = false
     @State private var loopObserver: NSObjectProtocol?
+    @State private var timeObserver: Any?
+    @State private var observed: AVPlayer?
 
     var body: some View {
         ZStack {
@@ -417,14 +463,16 @@ struct MediaPage: View {
         .contentShape(Rectangle())
         .task { await load() }
         .onChange(of: isActive) { active in
-            if active { if settings.autoplay { player?.play() } } else { player?.pause() }
+            if active { if settings.autoplay { player?.play() } } else { player?.pause(); saveProgress() }
         }
         .onAppear {
-            if let p = player, p.currentItem != nil { attachLoop(p) }
+            if let p = player, p.currentItem != nil { attachLoop(p); attachProgress(p) }
         }
         .onDisappear {
             player?.pause()
+            saveProgress()
             detachLoop()
+            detachProgress()
         }
     }
 
@@ -472,7 +520,14 @@ struct MediaPage: View {
         case .video:
             guard !Task.isCancelled else { return }
             if player == nil || player?.currentItem == nil { player = Preloader.shared.player(for: item, media: r) }
-            if let p = player { attachLoop(p) }
+            if let p = player {
+                attachLoop(p)
+                // Carry on where you stopped last time.
+                if let at = ResumeStore.shared.position(for: item.id), p.currentTime().seconds < 2 {
+                    _ = await p.seek(to: CMTime(seconds: at, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+                attachProgress(p)
+            }
             player?.currentItem?.preferredForwardBufferDuration = 0
             if isActive && settings.autoplay { player?.play() }
         case .image, .gif:
@@ -488,6 +543,31 @@ struct MediaPage: View {
             p?.seek(to: .zero)
             p?.play()
         }
+    }
+
+    /// Remembers the position every few seconds while the video plays.
+    private func attachProgress(_ p: AVPlayer) {
+        guard timeObserver == nil else { return }
+        let it = item
+        timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 4, preferredTimescale: 1), queue: .main) { [weak p] t in
+            guard let p, p.rate > 0 else { return }
+            let d = p.currentItem?.duration.seconds ?? 0
+            Task { @MainActor in ResumeStore.shared.update(it, seconds: t.seconds, duration: d) }
+        }
+        observed = p
+    }
+
+    private func detachProgress() {
+        if let o = timeObserver { observed?.removeTimeObserver(o) }
+        timeObserver = nil
+        observed = nil
+    }
+
+    private func saveProgress() {
+        guard let p = player, p.currentItem != nil else { return }
+        let t = p.currentTime().seconds
+        guard t > 5 else { return }
+        ResumeStore.shared.update(item, seconds: t, duration: p.currentItem?.duration.seconds ?? 0)
     }
 
     private func detachLoop() {
@@ -617,4 +697,42 @@ struct AirPlayButton: UIViewRepresentable {
         return v
     }
     func updateUIView(_ v: AVRoutePickerView, context: Context) {}
+}
+
+/// More like this, from the item's own page and the same site.
+struct SimilarSheet: View {
+    let item: MediaItem
+    var onPick: ([MediaItem], Int) -> Void
+    @State private var items: [MediaItem]?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                if let items {
+                    if items.isEmpty {
+                        EmptyStateView(symbol: "rectangle.stack", title: "Nothing similar found",
+                                       message: "This page doesn't link to related content.")
+                            .padding(16)
+                    } else {
+                        let a: CGFloat = item.kind == .video ? 16 / 11 : 4 / 5
+                        LazyVGrid(columns: MediaGrid.columns, spacing: 12) {
+                            ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
+                                Button { onPick(items, i) } label: { MediaCard(item: it, aspect: a) }
+                                    .buttonStyle(CardPressStyle())
+                            }
+                        }
+                        .padding(16)
+                    }
+                } else {
+                    ProgressView().tint(Theme.gold).frame(maxWidth: .infinity).padding(40)
+                }
+            }
+            .background(NightSky())
+            .navigationTitle("Similar")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .preferredColorScheme(.dark)
+        .task { items = await FeedEngine.shared.related(item) }
+    }
 }

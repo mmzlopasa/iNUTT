@@ -422,6 +422,8 @@ final class FeedEngine: ObservableObject {
     /// Finds the playable file behind an item. `.user` is for what is on screen now; it may open
     /// the page in a hidden web view. Results are kept (also on disk) so the next tap is instant.
     func resolve(_ item: MediaItem, priority: PageRenderer.Priority = .user) async -> ResolvedMedia? {
+        // Kept offline: plays from the device, no connection needed.
+        if let (file, kind) = OfflineStore.shared.file(for: item.id) { return ResolvedMedia(url: file, kind: kind, referer: nil) }
         if let r = resolvedCache[item.id] { return r }
         // Share work with a prefetch of the same item that is already running.
         if let t = inflight[item.id] {
@@ -539,6 +541,40 @@ final class FeedEngine: ObservableObject {
         scheduleSave()
     }
 
+    // MARK: Similar
+
+    /// More like this: what the item's own page links to (related videos and pictures), then items
+    /// from the same site with similar titles.
+    func related(_ item: MediaItem) async -> [MediaItem] {
+        var out: [MediaItem] = []
+        var seen: Set<String> = [item.id]
+        let ownKey = item.pageURL?.matchKey
+        func take(_ list: [MediaItem]) {
+            for i in Blocklist.filter(list) where i.isListing != true && (ownKey == nil || i.pageURL?.matchKey != ownKey) {
+                if seen.insert(i.id).inserted { out.append(i) }
+            }
+        }
+        if let page = item.pageURL, page.scheme?.hasPrefix("http") == true {
+            let site = SiteStore.shared.site(item.siteID) ?? Site(name: item.siteName, url: page)
+            if let r = try? await Self.fetchListing(url: page, base: page, site: site, categoryName: item.categoryName, allowRender: false) {
+                take(r.items.filter { Self.isMedia($0) || $0.pageURL != nil })
+            }
+        }
+        if out.count < 12 {
+            let words = Set(item.title.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count >= 4 })
+            let pool = allCachedItems().filter { $0.siteID == item.siteID || $0.siteName == item.siteName }
+            let scored = pool.map { i -> (MediaItem, Int) in
+                let w = Set(i.title.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+                var score = words.intersection(w).count * 2
+                if let c = item.categoryName, c == i.categoryName { score += 1 }
+                if i.kind == item.kind { score += 1 }
+                return (i, score)
+            }
+            take(scored.filter { $0.1 > 1 }.sorted { $0.1 > $1.1 }.prefix(60).map { $0.0 })
+        }
+        return Array(out.prefix(80))
+    }
+
     // MARK: Search
 
     func remoteSearch(_ query: String) async -> [MediaItem] {
@@ -582,12 +618,14 @@ final class FeedEngine: ObservableObject {
 
     func backgroundRefresh() async {
         scheduleBackgroundRefresh()
-        await refreshAll(allowRender: false)
+        await CookieSync.pull()
+        await NewContentWatcher.checkAndNotify()
+        if AppSettings.shared.backgroundRefresh { await refreshAll(allowRender: false) }
         saveNow()
     }
 
     func scheduleBackgroundRefresh() {
-        guard AppSettings.shared.backgroundRefresh else { return }
+        guard AppSettings.shared.backgroundRefresh || AppSettings.shared.notifyNew else { return }
         let req = BGAppRefreshTaskRequest(identifier: Self.refreshTaskID)
         req.earliestBeginDate = Date(timeIntervalSinceNow: 20 * 60)
         try? BGTaskScheduler.shared.submit(req)

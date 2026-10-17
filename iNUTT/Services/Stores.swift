@@ -122,10 +122,14 @@ final class Library: ObservableObject {
     private var historySave: DispatchWorkItem?
 
     func holdUpdates() { hold += 1 }
+    var isHolding: Bool { hold > 0 }
 
     func releaseUpdates() {
         hold = max(0, hold - 1)
-        guard hold == 0, dirty else { return }
+        guard hold == 0 else { return }
+        ResumeStore.shared.flush()
+        WatchLater.shared.flush()
+        guard dirty else { return }
         dirty = false
         if !pendingSeen.isEmpty {
             SeenMarks.shared.ids.formUnion(pendingSeen)
@@ -166,10 +170,11 @@ final class Library: ObservableObject {
             favoriteIDs.insert(item.id)
         }
         Disk.save(favorites, "favorites.json")
+        if AppSettings.shared.offlineFavorites { OfflineStore.shared.sync() }
     }
 
     func record(_ item: MediaItem) {
-        guard AppSettings.shared.historyEnabled else { return }
+        guard AppSettings.shared.historyEnabled, !AppSettings.shared.privateMode else { return }
         history.removeAll { $0.item.id == item.id }
         history.insert(HistoryEntry(item: item, viewedAt: Date()), at: 0)
         if !SeenMarks.shared.ids.contains(item.id) {
@@ -348,12 +353,22 @@ final class AppSettings: ObservableObject {
     /// Downloads go into the encrypted vault inside the app instead of Photos and Files.
     @Published var vaultDownloads: Bool { didSet { d.set(vaultDownloads, forKey: "vaultDownloads") } }
     @Published var shakeToLock: Bool { didSet { d.set(shakeToLock, forKey: "shakeToLock") } }
+    /// Nothing is remembered: no history, no seen marks, no resume points, no recent searches.
+    @Published var privateMode: Bool { didSet { d.set(privateMode, forKey: "privateMode") } }
+    /// Favorites are downloaded on Wi-Fi so they open offline.
+    @Published var offlineFavorites: Bool { didSet { d.set(offlineFavorites, forKey: "offlineFavorites") } }
+    @Published var offlineCollections: [String] { didSet { d.set(offlineCollections, forKey: "offlineCollections") } }
+    @Published var notifyNew: Bool { didSet { d.set(notifyNew, forKey: "notifyNew") } }
+    /// Notifications say only that something is new, never which site.
+    @Published var notifyDiscreet: Bool { didSet { d.set(notifyDiscreet, forKey: "notifyDiscreet") } }
+    @Published var watchedSites: [String] { didSet { d.set(watchedSites, forKey: "watchedSites") } }
+    @Published var watchedForums: [String] { didSet { d.set(watchedForums, forKey: "watchedForums") } }
 
     private init() {
         d.register(defaults: [
             "lockOnBackground": true, "historyEnabled": true, "autoplay": true, "loopVideos": true,
             "maxQuality": 2160, "saveToPhotos": true, "backgroundRefresh": true, "hideInSwitcher": true,
-            "slideshowSeconds": 5
+            "slideshowSeconds": 5, "notifyDiscreet": true
         ])
         faceIDEnabled = d.bool(forKey: "faceID")
         pinEnabled = d.bool(forKey: "pinEnabled")
@@ -375,12 +390,30 @@ final class AppSettings: ObservableObject {
         slideshowRandom = d.bool(forKey: "slideshowRandom")
         vaultDownloads = d.bool(forKey: "vaultDownloads")
         shakeToLock = d.bool(forKey: "shakeToLock")
+        privateMode = d.bool(forKey: "privateMode")
+        offlineFavorites = d.bool(forKey: "offlineFavorites")
+        offlineCollections = d.stringArray(forKey: "offlineCollections") ?? []
+        notifyNew = d.bool(forKey: "notifyNew")
+        notifyDiscreet = d.bool(forKey: "notifyDiscreet")
+        watchedSites = d.stringArray(forKey: "watchedSites") ?? []
+        watchedForums = d.stringArray(forKey: "watchedForums") ?? []
         Blocklist.update(blockedWords)
+    }
+
+    /// Follows a site or forum for new-content notifications. Returns true when it is now followed.
+    @discardableResult
+    func toggleWatch(_ id: UUID, forum: Bool) -> Bool {
+        var list = forum ? watchedForums : watchedSites
+        let on: Bool
+        if let i = list.firstIndex(of: id.uuidString) { list.remove(at: i); on = false } else { list.append(id.uuidString); on = true }
+        if forum { watchedForums = list } else { watchedSites = list }
+        if on && !notifyNew { notifyNew = true }
+        return on
     }
 
     func addRecentSearch(_ q: String) {
         let t = q.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
+        guard !t.isEmpty, !privateMode else { return }
         var r = recentSearches.filter { $0.caseInsensitiveCompare(t) != .orderedSame }
         r.insert(t, at: 0)
         recentSearches = Array(r.prefix(15))

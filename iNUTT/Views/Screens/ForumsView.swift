@@ -77,6 +77,7 @@ struct ForumsSection: View {
                         Button { open = BrowserTarget(url: f.url, title: f.name, forumID: f.id) } label: {
                             Label("Open start page", systemImage: "house")
                         }
+                        WatchToggle(id: f.id, forum: true)
                         Button(role: .destructive) { store.remove(f) } label: { Label("Remove", systemImage: "trash") }
                     }
                 }
@@ -287,6 +288,8 @@ struct WebBrowserView: View {
         .onAppear { model.load(target.url) }
         .onDisappear {
             if let id = target.forumID { ForumStore.shared.remember(id, url: model.web.url) }
+            // Whatever you signed in to here works on Home and in Sites too.
+            Task { await CookieSync.pull() }
         }
         .fullScreenCover(item: $viewerItems) { p in
             MediaViewer(items: p.items, startIndex: p.index)

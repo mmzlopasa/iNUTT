@@ -39,7 +39,11 @@ struct HomeView: View {
                         } else {
                             if !items.isEmpty { HeroCarousel(items: Array(items.prefix(8))) }
                             KindFilterBar(filter: $router.homeFilter)
+                            if router.homeFilter == nil || router.homeFilter == .video {
+                                ContinueWatchingRow()
+                            }
                             if router.homeFilter == nil {
+                                WatchLaterRow()
                                 ForEach(enabled) { site in
                                     SiteRow(site: site) { router.home.append(SiteRoute(siteID: site.id)) }
                                 }
@@ -127,6 +131,12 @@ struct HomeView: View {
             if lock.isProtectionOn {
                 circleButton("lock.fill") { lock.lockNow() }
             }
+            circleButton(settings.privateMode ? "eye.slash.fill" : "eye", active: settings.privateMode) {
+                settings.privateMode.toggle()
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                DownloadManager.shared.show(settings.privateMode ? "Private mode on: nothing is remembered" : "Private mode off",
+                                            symbol: settings.privateMode ? "eye.slash.fill" : "eye")
+            }
             circleButton("shuffle") { shuffle() }
             circleButton("clock.arrow.circlepath") { showHistory = true }
             circleButton("plus") { showAdd = true }
@@ -135,13 +145,13 @@ struct HomeView: View {
         .padding(.horizontal, 16)
     }
 
-    private func circleButton(_ symbol: String, action: @escaping () -> Void) -> some View {
+    private func circleButton(_ symbol: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.ink)
+                .foregroundStyle(active ? Theme.onGold : Theme.ink)
                 .frame(width: 38, height: 38)
-                .background(Circle().fill(Color.white.opacity(0.06)))
+                .background(Circle().fill(active ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(Color.white.opacity(0.06))))
                 .overlay(Circle().strokeBorder(Theme.line2, lineWidth: 1))
         }
     }
@@ -288,7 +298,83 @@ struct SiteRow: View {
                                     .frame(width: 190 * a, height: 190)
                             }
                             .buttonStyle(CardPressStyle())
-                            .contextMenu { MediaContextMenu(item: item) }
+                            .contextMenu { MediaContextMenu(item: item) } preview: { MediaPreview(item: item) }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+}
+
+/// Videos you stopped part way, with how far you got.
+struct ContinueWatchingRow: View {
+    @ObservedObject private var store = ResumeStore.shared
+    @EnvironmentObject private var viewer: ViewerState
+
+    var body: some View {
+        let points = Array(store.continueWatching.prefix(20))
+        if !points.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: "Continue watching", subtitle: "\(points.count) unfinished")
+                    .padding(.horizontal, 16)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(Array(points.enumerated()), id: \.element.item.id) { i, p in
+                            Button { viewer.open(points.map(\.item), at: i) } label: {
+                                MediaCard(item: p.item, aspect: 16 / 11)
+                                    .frame(width: 240, height: 165)
+                                    .overlay(alignment: .bottom) {
+                                        GeometryReader { g in
+                                            ZStack(alignment: .leading) {
+                                                Capsule().fill(Color.white.opacity(0.25))
+                                                Capsule().fill(Theme.goldGradient).frame(width: max(6, g.size.width * p.progress))
+                                            }
+                                        }
+                                        .frame(height: 4)
+                                        .padding(.horizontal, 12)
+                                        .padding(.bottom, 6)
+                                    }
+                            }
+                            .buttonStyle(CardPressStyle())
+                            .contextMenu {
+                                Button(role: .destructive) { store.remove(p.item.id) } label: {
+                                    Label("Remove from Continue watching", systemImage: "xmark.circle")
+                                }
+                                MediaContextMenu(item: p.item)
+                            } preview: { MediaPreview(item: p.item) }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+}
+
+/// Your Watch later queue on Home.
+struct WatchLaterRow: View {
+    @ObservedObject private var later = WatchLater.shared
+    @EnvironmentObject private var viewer: ViewerState
+
+    var body: some View {
+        let items = Array(later.items.prefix(20))
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: "Watch later", subtitle: "\(later.items.count) waiting")
+                    .padding(.horizontal, 16)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                            Button { viewer.open(later.items, at: i) } label: {
+                                let a: CGFloat = item.kind == .video ? 16 / 11 : 4 / 5
+                                MediaCard(item: item, aspect: a).frame(width: 170 * a, height: 170)
+                            }
+                            .buttonStyle(CardPressStyle())
+                            .contextMenu { MediaContextMenu(item: item) } preview: { MediaPreview(item: item) }
                         }
                     }
                     .padding(.horizontal, 16)

@@ -14,7 +14,7 @@ final class Preloader {
     func player(for item: MediaItem, media: ResolvedMedia) -> AVPlayer {
         if let p = players[item.id] { touch(item.id); return p }
         let s = AppSettings.shared
-        let asset = AVURLAsset(url: media.url, options: Net.avHeaders(referer: media.referer))
+        let asset = AVURLAsset(url: media.url, options: Net.avHeaders(referer: media.referer, url: media.url))
         let pi = AVPlayerItem(asset: asset)
         let q = CGFloat(s.maxQuality)
         pi.preferredMaximumResolution = CGSize(width: q * 16 / 9, height: q)

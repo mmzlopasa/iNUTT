@@ -42,6 +42,7 @@ final class ImagePipeline: @unchecked Sendable {
     }
 
     func data(_ url: URL, referer: URL?) async -> Data? {
+        if url.isFileURL { return try? Data(contentsOf: url) }
         let file = diskDir.appendingPathComponent(Self.hash(url.absoluteString))
         if let d = try? Data(contentsOf: file), !d.isEmpty { return d }
         let k = url.absoluteString

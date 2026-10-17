@@ -47,6 +47,7 @@ struct SitesView: View {
                             ForEach(sites.sites) { site in
                                 NavigationLink(value: SiteRoute(siteID: site.id)) { SiteCard(site: site) }
                                     .buttonStyle(CardPressStyle())
+                                    .contextMenu { WatchToggle(id: site.id, forum: false) }
                             }
                         }
                         .padding(.horizontal, 16)
@@ -133,3 +134,36 @@ struct SiteCard: View {
     }
 }
 
+
+/// Turns new-content notifications on or off for one site or forum.
+struct WatchToggle: View {
+    let id: UUID
+    let forum: Bool
+    @ObservedObject private var settings = AppSettings.shared
+
+    private var on: Bool {
+        settings.notifyNew && (forum ? settings.watchedForums : settings.watchedSites).contains(id.uuidString)
+    }
+
+    var body: some View {
+        Button {
+            if on {
+                settings.toggleWatch(id, forum: forum)
+            } else {
+                if !(forum ? settings.watchedForums : settings.watchedSites).contains(id.uuidString) {
+                    settings.toggleWatch(id, forum: forum)
+                }
+                settings.notifyNew = true
+                Task {
+                    let ok = await NewContentWatcher.requestPermission()
+                    _ = await NewContentWatcher.check()
+                    FeedEngine.shared.scheduleBackgroundRefresh()
+                    DownloadManager.shared.show(ok ? "You'll be told about new content" : "Allow notifications in Settings",
+                                                symbol: ok ? "bell.fill" : "bell.slash.fill", isError: !ok)
+                }
+            }
+        } label: {
+            Label(on ? "Stop new-content alerts" : "Alert me about new content", systemImage: on ? "bell.slash" : "bell")
+        }
+    }
+}

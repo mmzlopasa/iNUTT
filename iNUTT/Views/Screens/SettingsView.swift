@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var backupFile: URL?
     @State private var importing = false
     @State private var importNote: String?
+    @ObservedObject private var offline = OfflineStore.shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -65,10 +66,45 @@ struct SettingsView: View {
                     NavigationLink { HistoryView() } label: {
                         row("clock.arrow.circlepath", "View and search history", value: "\(library.history.count)")
                     }
+                    Toggle(isOn: $settings.privateMode) { row("eye.slash.fill", "Private mode") }
                     Toggle(isOn: $settings.historyEnabled) { row("record.circle", "Save history") }
+                        .disabled(settings.privateMode)
                     Button(role: .destructive) { library.clearHistory() } label: { row("trash", "Clear history", tint: Theme.err) }
                         .disabled(library.history.isEmpty)
-                } header: { sectionTitle("History") }
+                    Button(role: .destructive) { ResumeStore.shared.clear() } label: { row("play.slash", "Clear Continue watching", tint: Theme.err) }
+                    Button(role: .destructive) { WatchLater.shared.clear() } label: { row("clock.badge.xmark", "Clear Watch later", tint: Theme.err) }
+                } header: { sectionTitle("History") } footer: {
+                    Text("Private mode remembers nothing: no history, no watched marks, no Continue watching, no recent searches. Also on the eye button on Home.")
+                        .font(Theme.text(12)).foregroundStyle(Theme.muted)
+                }
+                .listRowBackground(rowBG)
+
+                Section {
+                    Toggle(isOn: Binding(get: { settings.offlineFavorites }, set: { settings.offlineFavorites = $0; offline.sync() })) {
+                        row("arrow.down.circle.fill", "Keep favorites offline")
+                    }
+                    row("internaldrive", offline.syncing ? "Downloading…" : "Offline files",
+                        value: ByteCountFormatter.string(fromByteCount: offline.totalSize, countStyle: .file) + " · \(offline.entries.count)")
+                    Button(role: .destructive) { offline.removeAll() } label: { row("trash", "Remove offline files", tint: Theme.err) }
+                        .disabled(offline.entries.isEmpty)
+                } header: { sectionTitle("Offline") } footer: {
+                    Text("Favorites, and collections you mark with \"Keep offline\" (long-press a collection), download on Wi-Fi only and then open without a connection. Streams (HLS) can't be kept.")
+                        .font(Theme.text(12)).foregroundStyle(Theme.muted)
+                }
+                .listRowBackground(rowBG)
+
+                Section {
+                    Toggle(isOn: Binding(get: { settings.notifyNew }, set: { v in
+                        settings.notifyNew = v
+                        if v { Task { _ = await NewContentWatcher.requestPermission(); FeedEngine.shared.scheduleBackgroundRefresh() } }
+                    })) { row("bell.badge.fill", "New-content alerts") }
+                    Toggle(isOn: $settings.notifyDiscreet) { row("bell.slash", "Discreet text") }
+                        .disabled(!settings.notifyNew)
+                    row("list.bullet", "Following", value: "\(settings.watchedSites.count) sites · \(settings.watchedForums.count) forums")
+                } header: { sectionTitle("Notifications") } footer: {
+                    Text("Long-press a site or forum in Sites and pick \"Alert me about new content\". iOS checks in the background when it allows it, usually a few times an hour. Discreet text says only \"New content is waiting\".")
+                        .font(Theme.text(12)).foregroundStyle(Theme.muted)
+                }
                 .listRowBackground(rowBG)
 
                 Section {

@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import WebKit
 import UIKit
 
@@ -95,14 +96,19 @@ enum Net {
     }
 
     /// Headers AVPlayer should send so hot-link protected media plays.
-    static func avHeaders(referer: URL?) -> [String: Any] {
+    static func avHeaders(referer: URL?, url: URL? = nil) -> [String: Any] {
         var h: [String: String] = ["User-Agent": userAgent]
         if let referer {
             h["Referer"] = referer.absoluteString
             // CDNs that check where a stream is played from also look at the origin.
             if let scheme = referer.scheme, let host = referer.host { h["Origin"] = "\(scheme)://\(host)" }
         }
-        return ["AVURLAssetHTTPHeaderFieldsKey": h]
+        var opts: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": h]
+        // Signed in through the in-app browser: the player sends the same cookies.
+        if let url, !url.isFileURL, let cookies = HTTPCookieStorage.shared.cookies(for: url), !cookies.isEmpty {
+            opts[AVURLAssetHTTPCookiesKey] = cookies
+        }
+        return opts
     }
 }
 
