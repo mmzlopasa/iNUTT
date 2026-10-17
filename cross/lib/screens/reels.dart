@@ -254,7 +254,10 @@ class _ReelsViewState extends State<ReelsView> {
     LockManager.shared.addListener(_activityChanged);
     appResumed.addListener(_activityChanged);
     _active = _shouldPlay;
-    if (_active) unawaited(ReelsStore.shared.loadIfNeeded());
+    if (_active) {
+      Library.shared.holdUpdates();
+      unawaited(ReelsStore.shared.loadIfNeeded());
+    }
   }
 
   bool get _shouldPlay => AppRouter.shared.tab == AppTab.reels && !LockManager.shared.isLocked && appResumed.value;
@@ -265,6 +268,7 @@ class _ReelsViewState extends State<ReelsView> {
     AppRouter.shared.removeListener(_activityChanged);
     LockManager.shared.removeListener(_activityChanged);
     appResumed.removeListener(_activityChanged);
+    if (_active) Library.shared.releaseUpdates();
     _page.dispose();
     super.dispose();
   }
@@ -272,6 +276,8 @@ class _ReelsViewState extends State<ReelsView> {
   void _activityChanged() {
     final active = _shouldPlay;
     if (active == _active) return;
+    // Screens behind Reels catch up with what was watched once you leave.
+    active ? Library.shared.holdUpdates() : Library.shared.releaseUpdates();
     if (mounted) setState(() => _active = active);
     if (active) unawaited(ReelsStore.shared.loadIfNeeded());
   }
@@ -338,6 +344,8 @@ class _ReelsViewState extends State<ReelsView> {
                 HapticFeedback.selectionClick();
                 setState(() => _index = i);
                 if (i >= store.items.length - 4) unawaited(store.loadMore());
+                // The next page is already built; find the one after it too.
+                if (i + 2 < store.items.length) unawaited(FeedEngine.shared.resolve(store.items[i + 2]));
               },
               itemBuilder: (context, i) => ReelPage(
                 key: ValueKey(store.items[i].id),

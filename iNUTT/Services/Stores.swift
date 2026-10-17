@@ -113,7 +113,38 @@ final class Library: ObservableObject {
     static let shared = Library()
 
     @Published private(set) var favorites: [MediaItem] = []
-    @Published private(set) var history: [HistoryEntry] = []
+    /// Not published directly: while the viewer or Reels is open, screens underneath are not
+    /// redrawn for every swipe; they catch up once when it closes.
+    private(set) var history: [HistoryEntry] = []
+    private var hold = 0
+    private var dirty = false
+    private var pendingSeen = Set<String>()
+    private var historySave: DispatchWorkItem?
+
+    func holdUpdates() { hold += 1 }
+
+    func releaseUpdates() {
+        hold = max(0, hold - 1)
+        guard hold == 0, dirty else { return }
+        dirty = false
+        if !pendingSeen.isEmpty {
+            SeenMarks.shared.ids.formUnion(pendingSeen)
+            pendingSeen = []
+        }
+        objectWillChange.send()
+    }
+
+    private func historyChanged() {
+        // Saving 2000 entries on every swipe is wasted work; once things settle is enough.
+        historySave?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            Disk.save(self.history, "history.json")
+        }
+        historySave = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: w)
+        if hold > 0 { dirty = true } else { objectWillChange.send() }
+    }
     private var favoriteIDs = Set<String>() { didSet { FavoriteMarks.shared.ids = favoriteIDs } }
 
     private init() {
@@ -141,21 +172,24 @@ final class Library: ObservableObject {
         guard AppSettings.shared.historyEnabled else { return }
         history.removeAll { $0.item.id == item.id }
         history.insert(HistoryEntry(item: item, viewedAt: Date()), at: 0)
-        if !SeenMarks.shared.ids.contains(item.id) { SeenMarks.shared.ids.insert(item.id) }
+        if !SeenMarks.shared.ids.contains(item.id) {
+            if hold > 0 { pendingSeen.insert(item.id) } else { SeenMarks.shared.ids.insert(item.id) }
+        }
         if history.count > Limits.maxHistory { history.removeLast(history.count - Limits.maxHistory) }
-        Disk.save(history, "history.json")
+        historyChanged()
     }
 
     func removeHistory(_ ids: Set<UUID>) {
         history.removeAll { ids.contains($0.id) }
         SeenMarks.shared.ids = Set(history.map(\.item.id))
-        Disk.save(history, "history.json")
+        historyChanged()
     }
 
     func clearHistory() {
         history = []
+        pendingSeen = []
         SeenMarks.shared.ids = []
-        Disk.save(history, "history.json")
+        historyChanged()
     }
 
     /// Used by backup restore.

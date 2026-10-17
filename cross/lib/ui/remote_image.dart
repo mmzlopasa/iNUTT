@@ -1,9 +1,29 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../core/image_cache.dart';
 import 'theme.dart';
+
+/// One clock for every placeholder on screen, instead of a ticker per card.
+class _ShimmerClock extends ChangeNotifier {
+  static final _ShimmerClock shared = _ShimmerClock();
+  late final Ticker _ticker = Ticker((elapsed) {
+    value = (elapsed.inMilliseconds % 1400) / 1400;
+    notifyListeners();
+  });
+  double value = 0;
+  int _users = 0;
+
+  void attach() {
+    if (_users++ == 0) _ticker.start();
+  }
+
+  void detach() {
+    if (--_users == 0) _ticker.stop();
+  }
+}
 
 /// Loading placeholder with a soft moving highlight.
 class Shimmer extends StatefulWidget {
@@ -14,31 +34,45 @@ class Shimmer extends StatefulWidget {
   State<Shimmer> createState() => _ShimmerState();
 }
 
-class _ShimmerState extends State<Shimmer> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat();
+class _ShimmerState extends State<Shimmer> {
+  @override
+  void initState() {
+    super.initState();
+    _ShimmerClock.shared.attach();
+  }
 
   @override
   void dispose() {
-    _c.dispose();
+    _ShimmerClock.shared.detach();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => RepaintBoundary(
-    child: AnimatedBuilder(
-      animation: _c,
-      builder: (_, __) => DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(widget.radius),
-          gradient: LinearGradient(
-            begin: Alignment(-1.5 + 3 * _c.value, -0.3),
-            end: Alignment(-0.5 + 3 * _c.value, 0.3),
-            colors: const [T.navy2, Color(0xFF242836), T.navy2],
-          ),
-        ),
-      ),
-    ),
+    child: CustomPaint(painter: _ShimmerPainter(widget.radius), size: Size.infinite),
   );
+}
+
+/// Repaints from the shared clock without rebuilding any widget.
+class _ShimmerPainter extends CustomPainter {
+  final double radius;
+  _ShimmerPainter(this.radius) : super(repaint: _ShimmerClock.shared);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final v = _ShimmerClock.shared.value;
+    final rect = Offset.zero & size;
+    final paint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment(-1.5 + 3 * v, -0.3),
+        end: Alignment(-0.5 + 3 * v, 0.3),
+        colors: const [T.navy2, Color(0xFF242836), T.navy2],
+      ).createShader(rect);
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, Radius.circular(radius)), paint);
+  }
+
+  @override
+  bool shouldRepaint(_ShimmerPainter old) => old.radius != radius;
 }
 
 /// Network image through the shared memory + disk cache. Cached images appear in the first frame.

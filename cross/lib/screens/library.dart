@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -85,6 +86,7 @@ class _FavoritesViewState extends State<FavoritesView> {
       final items = _filter == null ? source : source.where((e) => e.kind == _filter).toList();
       return SkyScaffold(
         body: CustomScrollView(
+          scrollCacheExtent: const ScrollCacheExtent.pixels(900),
           slivers: [
             SliverToBoxAdapter(
               child: SafeArea(
@@ -257,6 +259,7 @@ class _VaultViewState extends State<VaultView> {
       return SkyScaffold(
         appBar: AppBar(title: const Text('Vault')),
         body: CustomScrollView(
+          scrollCacheExtent: const ScrollCacheExtent.pixels(900),
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
@@ -447,6 +450,7 @@ class _HistoryViewState extends State<HistoryView> {
           ],
         ),
         body: CustomScrollView(
+          scrollCacheExtent: const ScrollCacheExtent.pixels(900),
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),

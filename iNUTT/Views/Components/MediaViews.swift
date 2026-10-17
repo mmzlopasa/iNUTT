@@ -1,20 +1,44 @@
 import SwiftUI
 
-struct Shimmer: View {
-    @State private var phase: CGFloat = -1
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Theme.navy2
-                LinearGradient(colors: [.clear, .white.opacity(0.07), .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: geo.size.width * 0.8)
-                    .offset(x: phase * geo.size.width * 1.4)
-            }
-        }
-        .clipped()
-        .onAppear {
-            withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) { phase = 1 }
-        }
+/// Loading placeholder. The moving highlight is a Core Animation layer, so dozens of them
+/// cost the app nothing while scrolling.
+struct Shimmer: UIViewRepresentable {
+    func makeUIView(context: Context) -> ShimmerView { ShimmerView() }
+    func updateUIView(_ v: ShimmerView, context: Context) {}
+}
+
+final class ShimmerView: UIView {
+    private let highlight = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor(Theme.navy2)
+        clipsToBounds = true
+        highlight.colors = [UIColor.clear.cgColor, UIColor.white.withAlphaComponent(0.07).cgColor, UIColor.clear.cgColor]
+        highlight.startPoint = CGPoint(x: 0, y: 0.5)
+        highlight.endPoint = CGPoint(x: 1, y: 0.5)
+        layer.addSublayer(highlight)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let w = bounds.width
+        guard w > 0 else { return }
+        highlight.frame = CGRect(x: 0, y: 0, width: w * 0.8, height: bounds.height)
+        highlight.removeAnimation(forKey: "move")
+        let a = CABasicAnimation(keyPath: "position.x")
+        a.fromValue = -w * 0.4
+        a.toValue = w * 1.4
+        a.duration = 1.3
+        a.repeatCount = .infinity
+        highlight.add(a, forKey: "move")
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { setNeedsLayout() }
     }
 }
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import '../core/feed_engine.dart';
@@ -193,7 +194,7 @@ class _HomeViewState extends State<HomeView> {
         body: RefreshIndicator(
           color: T.gold,
           onRefresh: engine.refreshAll,
-          child: CustomScrollView(slivers: slivers),
+          child: CustomScrollView(scrollCacheExtent: const ScrollCacheExtent.pixels(900), slivers: slivers),
         ),
       );
     },

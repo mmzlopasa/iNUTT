@@ -71,10 +71,12 @@ struct MediaViewer: View {
         .statusBarHidden(!chrome)
         .persistentSystemOverlays(chrome ? .automatic : .hidden)
         .onAppear {
+            library.holdUpdates()
             library.record(current)
             Preloader.shared.preload(around: index, in: items)
         }
         .onDisappear {
+            library.releaseUpdates()
             slideTask?.cancel()
             loopTask?.cancel()
         }

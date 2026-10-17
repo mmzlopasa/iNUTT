@@ -56,6 +56,7 @@ class _MediaViewerState extends State<MediaViewer> {
   @override
   void initState() {
     super.initState();
+    Library.shared.holdUpdates();
     Library.shared.record(_current);
     _preload(_index);
   }
@@ -65,6 +66,7 @@ class _MediaViewerState extends State<MediaViewer> {
     _slideTimer?.cancel();
     _ended?.cancel();
     _loopSub?.cancel();
+    Library.shared.releaseUpdates();
     _page.dispose();
     _focus.dispose();
     super.dispose();
@@ -282,6 +284,8 @@ class _MediaViewerState extends State<MediaViewer> {
                   scale: 1 - (_dragY.abs() / 2000).clamp(0.0, 0.12),
                   child: PageView.builder(
                     controller: _page,
+                    // Neighbours are built ahead, so their images and videos are ready before the swipe.
+                    allowImplicitScrolling: true,
                     physics: _zoomed ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
                     itemCount: widget.items.length,
                     onPageChanged: (i) {

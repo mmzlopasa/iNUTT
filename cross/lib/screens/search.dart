@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../core/feed_engine.dart';
 import '../core/models.dart';
@@ -200,7 +201,11 @@ class _SearchViewState extends State<SearchView> {
     }
     slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 110)));
     return SkyScaffold(
-      body: CustomScrollView(keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag, slivers: slivers),
+      body: CustomScrollView(
+        scrollCacheExtent: const ScrollCacheExtent.pixels(900),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        slivers: slivers,
+      ),
     );
   }
 

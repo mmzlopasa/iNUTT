@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -181,14 +182,39 @@ class Library extends ChangeNotifier {
     Disk.save('favorites.json', favorites.map((e) => e.toJson()).toList());
   }
 
+  /// While the viewer or Reels is open, screens underneath are not redrawn for every swipe;
+  /// they catch up once when it closes.
+  int _hold = 0;
+  bool _dirty = false;
+  Timer? _historySave;
+
+  void holdUpdates() => _hold++;
+
+  void releaseUpdates() {
+    if (_hold > 0) _hold--;
+    if (_hold == 0 && _dirty) {
+      _dirty = false;
+      favoritesVersion.value++;
+      notifyListeners();
+    }
+  }
+
   void record(MediaItem item) {
     if (!AppSettings.shared.historyEnabled || item.isListing) return;
     history.removeWhere((e) => e.item.id == item.id);
     history.insert(0, HistoryEntry(item: item, viewedAt: DateTime.now()));
-    // Grids redraw once, the first time something is opened.
-    if (_seenIds.add(item.id)) favoritesVersion.value++;
+    final firstTime = _seenIds.add(item.id);
     if (history.length > Limits.maxHistory) history = history.sublist(0, Limits.maxHistory);
-    _saveHistory();
+    // Saving 2000 entries on every swipe is wasted work; once things settle is enough.
+    _historySave?.cancel();
+    _historySave = Timer(const Duration(seconds: 2), () => Disk.save('history.json', history.map((e) => e.toJson()).toList()));
+    if (_hold > 0) {
+      _dirty = true;
+      return;
+    }
+    // Grids redraw once, the first time something is opened.
+    if (firstTime) favoritesVersion.value++;
+    notifyListeners();
   }
 
   void removeHistory(Set<String> ids) {

@@ -32,6 +32,10 @@ Future<void> main() async {
   await Disk.init();
   await AppSettings.shared.load();
   await ImagePipeline.shared.init();
+  // Room for a few screens of decoded thumbnails, so scrolling back never decodes again.
+  PaintingBinding.instance.imageCache
+    ..maximumSize = 1500
+    ..maximumSizeBytes = 280 << 20;
   SiteStore.shared.load();
   Library.shared.load();
   CollectionStore.shared.load();

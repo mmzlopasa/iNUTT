@@ -192,7 +192,13 @@ final class ReelsStore: ObservableObject {
 final class ReelsCursor: ObservableObject {
     static let shared = ReelsCursor()
     @Published var index = 0
-    @Published var visible = false
+    /// Screens behind Reels catch up with what was watched once you leave.
+    @Published var visible = false {
+        didSet {
+            guard visible != oldValue else { return }
+            if visible { Library.shared.holdUpdates() } else { Library.shared.releaseUpdates() }
+        }
+    }
     /// Bumped when the reel on screen ended and the next one should slide in.
     @Published var advance = 0
 }

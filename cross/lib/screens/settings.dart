@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -299,7 +298,12 @@ class _SettingsViewState extends State<SettingsView> {
         );
         if (dest != null) DownloadManager.shared.show('Backup saved');
       } else {
-        await SharePlus.instance.share(ShareParams(files: [XFile(f.path, mimeType: 'application/json')], subject: 'iNUTT backup'));
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [XFile(f.path, mimeType: 'application/json')],
+            subject: 'iNUTT backup',
+          ),
+        );
       }
     } catch (_) {
       DownloadManager.shared.show('Couldn\'t export the backup', success: false);

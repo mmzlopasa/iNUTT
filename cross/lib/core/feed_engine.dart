@@ -538,8 +538,9 @@ class FeedEngine extends ChangeNotifier {
         final posts = (await _parseRedditOff(data, page, site ?? Site(name: item.siteName, url: page), null)).items;
         if (posts.isEmpty) return null;
         final p = posts.first;
-        if (p.gallery != null && p.gallery!.length > 1)
+        if (p.gallery != null && p.gallery!.length > 1) {
           return ResolvedMedia(url: p.gallery!.first, kind: MediaKind.image, gallery: p.gallery!);
+        }
         if (p.mediaUrl != null) return ResolvedMedia(url: p.mediaUrl!, kind: p.kind, referer: page);
         return null;
       }

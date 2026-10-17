@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../core/downloads.dart';
 import '../core/feed_engine.dart';
@@ -78,6 +79,7 @@ class _SiteDetailViewState extends State<SiteDetailView> {
           color: T.gold,
           onRefresh: () => engine.refreshForHome(site),
           child: CustomScrollView(
+            scrollCacheExtent: const ScrollCacheExtent.pixels(900),
             slivers: [
               SliverToBoxAdapter(
                 child: SiteHeader(site: site, subtitle: site.host),
@@ -203,6 +205,7 @@ class _CategoryViewState extends State<CategoryView> {
           color: T.gold,
           onRefresh: () => engine.refresh(site, c),
           child: CustomScrollView(
+            scrollCacheExtent: const ScrollCacheExtent.pixels(900),
             slivers: [
               SliverToBoxAdapter(
                 child: SiteHeader(site: site, subtitle: c.name, title: c.name, caption: site.name),
@@ -262,6 +265,7 @@ class _CategoryIndexViewState extends State<CategoryIndexView> {
     return SkyScaffold(
       appBar: AppBar(title: const Text('Categories')),
       body: CustomScrollView(
+        scrollCacheExtent: const ScrollCacheExtent.pixels(900),
         slivers: [
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
