@@ -367,7 +367,17 @@ final class Taste: ObservableObject {
     private var saveWork: DispatchWorkItem?
     private struct Saved: Codable { var weights: [String: Double]; var signals: Int }
 
-    enum Signal: Double { case open = 1, later = 2, finished = 3, download = 3, favorite = 4 }
+    enum Signal {
+        case open, later, finished, download, favorite
+        var weight: Double {
+            switch self {
+            case .open: return 1
+            case .later: return 2
+            case .finished, .download: return 3
+            case .favorite: return 4
+            }
+        }
+    }
 
     private init() {
         if let s = Disk.load(Saved.self, "taste.json") {
@@ -393,7 +403,7 @@ final class Taste: ObservableObject {
         guard s.smartMix, !s.privateMode, !item.isFromForum else { return }
         // Older taste fades slowly, so the mix follows what you like now.
         if signals % 50 == 49 { weights = weights.mapValues { $0 * 0.9 }.filter { $0.value > 0.05 } }
-        for k in Self.features(item) { weights[k, default: 0] += signal.rawValue }
+        for k in Self.features(item) { weights[k, default: 0] += signal.weight }
         if weights.count > 3000 {
             weights = Dictionary(uniqueKeysWithValues: weights.sorted { $0.value > $1.value }.prefix(2500).map { ($0.key, $0.value) })
         }
