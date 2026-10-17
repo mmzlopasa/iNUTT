@@ -10,6 +10,7 @@ struct MediaViewer: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var downloads: DownloadManager
     @Environment(\.dismiss) private var dismiss
+    @State private var browser: BrowserTarget?
 
     init(items: [MediaItem], startIndex: Int) {
         self.items = items
@@ -55,6 +56,7 @@ struct MediaViewer: View {
         }
         .animation(.easeInOut(duration: 0.2), value: chrome)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: downloads.toast)
+        .fullScreenCover(item: $browser) { t in WebBrowserView(target: t) }
         .statusBarHidden(!chrome)
         .persistentSystemOverlays(chrome ? .automatic : .hidden)
         .onAppear {
@@ -146,6 +148,12 @@ struct MediaViewer: View {
                             .rotationEffect(.degrees(-90))
                             .frame(width: 46, height: 46)
                             .allowsHitTesting(false)
+                    }
+                }
+                // The original page in the in-app browser, signed in, for anything iNUTT can't play itself.
+                if let page = current.pageURL {
+                    actionButton("safari", active: false) {
+                        browser = BrowserTarget(url: page, title: current.siteName)
                     }
                 }
                 if let link = FeedEngine.shared.cachedResolution(current)?.url ?? current.mediaURL ?? current.pageURL {

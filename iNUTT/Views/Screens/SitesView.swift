@@ -5,6 +5,7 @@ struct SitesView: View {
     @EnvironmentObject private var router: Router
     @EnvironmentObject private var engine: FeedEngine
     @State private var showAdd = false
+    @AppStorage("sitesSection") private var section = 0
     @Environment(\.horizontalSizeClass) private var hSize
 
     var body: some View {
@@ -26,7 +27,16 @@ struct SitesView: View {
                     }
                     .padding(.horizontal, 16)
 
-                    if sites.sites.isEmpty {
+                    Picker("", selection: $section) {
+                        Text("Sites").tag(0)
+                        Text("Forums").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+
+                    if section == 1 {
+                        ForumsSection()
+                    } else if sites.sites.isEmpty {
                         EmptyStateView(symbol: "globe", title: "No sites",
                                        message: "Add up to 50 sites. iNUTT finds images, GIFs, videos and categories automatically.",
                                        buttonTitle: "Add site") { showAdd = true }
