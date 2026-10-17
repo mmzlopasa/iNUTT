@@ -168,6 +168,7 @@ final class Library: ObservableObject {
         } else {
             favorites.insert(item, at: 0)
             favoriteIDs.insert(item.id)
+            Taste.shared.learn(item, .favorite)
         }
         Disk.save(favorites, "favorites.json")
         if AppSettings.shared.offlineFavorites { OfflineStore.shared.sync() }
@@ -177,6 +178,7 @@ final class Library: ObservableObject {
         guard AppSettings.shared.historyEnabled, !AppSettings.shared.privateMode else { return }
         history.removeAll { $0.item.id == item.id }
         history.insert(HistoryEntry(item: item, viewedAt: Date()), at: 0)
+        Taste.shared.learn(item, .open)
         if !SeenMarks.shared.ids.contains(item.id) {
             if hold > 0 { pendingSeen.insert(item.id) } else { SeenMarks.shared.ids.insert(item.id) }
         }
@@ -195,6 +197,15 @@ final class Library: ObservableObject {
         pendingSeen = []
         SeenMarks.shared.ids = []
         historyChanged()
+    }
+
+    /// Used by sync: the list as merged with your other devices.
+    func replaceFavorites(_ items: [MediaItem]) {
+        guard items.map(\.id) != favorites.map(\.id) else { return }
+        favorites = items
+        favoriteIDs = Set(items.map(\.id))
+        Disk.save(favorites, "favorites.json")
+        if AppSettings.shared.offlineFavorites { OfflineStore.shared.sync() }
     }
 
     /// Used by backup restore.
@@ -299,6 +310,13 @@ final class CollectionStore: ObservableObject {
         save()
     }
 
+    /// Used by sync: the collections as merged with your other devices.
+    func replaceAll(_ list: [MediaCollection]) {
+        guard list != collections else { return }
+        collections = list
+        save()
+    }
+
     /// Used by backup restore.
     func merge(_ incoming: [MediaCollection]) {
         for c in incoming {
@@ -363,12 +381,16 @@ final class AppSettings: ObservableObject {
     @Published var notifyDiscreet: Bool { didSet { d.set(notifyDiscreet, forKey: "notifyDiscreet") } }
     @Published var watchedSites: [String] { didSet { d.set(watchedSites, forKey: "watchedSites") } }
     @Published var watchedForums: [String] { didSet { d.set(watchedForums, forKey: "watchedForums") } }
+    /// The same picture or video from several sites is shown once.
+    @Published var hideDuplicates: Bool { didSet { d.set(hideDuplicates, forKey: "hideDuplicates"); FeedEngine.shared.filtersChanged() } }
+    /// Home puts what matches your taste first, in a "Picked for you" row.
+    @Published var smartMix: Bool { didSet { d.set(smartMix, forKey: "smartMix") } }
 
     private init() {
         d.register(defaults: [
             "lockOnBackground": true, "historyEnabled": true, "autoplay": true, "loopVideos": true,
             "maxQuality": 2160, "saveToPhotos": true, "backgroundRefresh": true, "hideInSwitcher": true,
-            "slideshowSeconds": 5, "notifyDiscreet": true
+            "slideshowSeconds": 5, "notifyDiscreet": true, "hideDuplicates": true, "smartMix": true
         ])
         faceIDEnabled = d.bool(forKey: "faceID")
         pinEnabled = d.bool(forKey: "pinEnabled")
@@ -397,6 +419,8 @@ final class AppSettings: ObservableObject {
         notifyDiscreet = d.bool(forKey: "notifyDiscreet")
         watchedSites = d.stringArray(forKey: "watchedSites") ?? []
         watchedForums = d.stringArray(forKey: "watchedForums") ?? []
+        hideDuplicates = d.bool(forKey: "hideDuplicates")
+        smartMix = d.bool(forKey: "smartMix")
         Blocklist.update(blockedWords)
     }
 

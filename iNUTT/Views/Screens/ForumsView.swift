@@ -205,7 +205,7 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         guard let json = try? await web.evaluateJavaScript(Self.mediaScript) as? String,
               let list = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: String]] else { return [] }
         let base = web.url ?? URL(string: "https://example.com")!
-        let siteID = UUID(uuidString: "00000000-0000-0000-0000-0000000F0A0B")!
+        let siteID = MediaItem.forumSiteID
         var seen = Set<String>()
         return list.compactMap { d in
             let media = HTML.resolve(d["m"], base: base)

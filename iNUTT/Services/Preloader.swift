@@ -39,13 +39,20 @@ final class Preloader {
 
     func preload(around index: Int, in items: [MediaItem]) {
         let targets = [index + 1, index + 2, index - 1].filter { items.indices.contains($0) }.map { items[$0] }
-        for item in targets {
+        // A little further ahead only the link is worked out, so it is ready by the time a player is needed.
+        for j in [index + 3, index + 4] where items.indices.contains(j) {
+            let item = items[j]
+            Task { _ = await FeedEngine.shared.resolve(item, priority: .background) }
+        }
+        for (n, item) in targets.enumerated() {
             Task {
                 guard let media = await FeedEngine.shared.resolve(item, priority: .background) else { return }
                 switch media.kind {
                 case .video:
                     let p = self.player(for: item, media: media)
-                    p.currentItem?.preferredForwardBufferDuration = 4
+                    // The next video buffers its first seconds while you watch, like TikTok, so it starts at once.
+                    p.currentItem?.preferredForwardBufferDuration = n == 0 ? 10 : 4
+                    await self.preroll(p, id: item.id)
                 case .image, .gif:
                     if media.gallery.count > 1 {
                         for u in media.gallery.prefix(3) { _ = await ImagePipeline.shared.data(u, referer: media.referer) }
@@ -55,6 +62,18 @@ final class Preloader {
                 }
             }
         }
+    }
+
+    /// Waits until the player can play, then has it fill its buffer from the start without playing.
+    private func preroll(_ p: AVPlayer, id: String) async {
+        for _ in 0..<60 {
+            guard players[id] === p, let item = p.currentItem else { return }
+            if item.status == .readyToPlay { break }
+            if item.status == .failed { return }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        guard players[id] === p, p.rate == 0, p.status == .readyToPlay, p.currentItem?.status == .readyToPlay else { return }
+        _ = await p.preroll(atRate: 1)
     }
 
     private func touch(_ id: String) {

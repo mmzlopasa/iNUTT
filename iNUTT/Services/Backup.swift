@@ -4,6 +4,8 @@ import Foundation
 /// used on iOS, Android and Windows, so a backup from one restores on the others.
 enum Backup {
     struct Item: Codable {
+        /// Kept by sync so the same item is recognised on every device.
+        var id: String?
         var title: String
         var siteName: String
         var thumbnailUrl: String?
@@ -39,22 +41,25 @@ enum Backup {
 
     struct Summary { var sites = 0, forums = 0, favorites = 0, collections = 0 }
 
-    private static func pack(_ i: MediaItem) -> Item {
-        Item(title: i.title, siteName: i.siteName, thumbnailUrl: i.thumbnailURL?.absoluteString,
+    static func pack(_ i: MediaItem, withID: Bool = false) -> Item {
+        Item(id: withID ? i.id : nil, title: i.title, siteName: i.siteName, thumbnailUrl: i.thumbnailURL?.absoluteString,
              mediaUrl: i.mediaURL?.absoluteString, pageUrl: i.pageURL?.absoluteString, kind: i.kind.rawValue,
              duration: i.duration, categoryName: i.categoryName)
     }
 
     @MainActor
-    private static func unpack(_ i: Item) -> MediaItem? {
+    static func unpack(_ i: Item) -> MediaItem? {
         let thumb = i.thumbnailUrl.flatMap(URL.init(string:))
         let media = i.mediaUrl.flatMap(URL.init(string:))
         let page = i.pageUrl.flatMap(URL.init(string:))
         guard thumb != nil || media != nil || page != nil else { return nil }
         let site = SiteStore.shared.sites.first { $0.name == i.siteName }
-        return MediaItem(siteID: site?.id ?? UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF0, 0xB0, 0x01)),
-                         siteName: i.siteName, title: i.title, thumbnailURL: thumb, mediaURL: media, pageURL: page,
-                         kind: MediaKind(rawValue: i.kind) ?? .image, duration: i.duration, categoryName: i.categoryName)
+        let forum = site == nil && ForumStore.shared.forums.contains { $0.name == i.siteName }
+        var item = MediaItem(siteID: site?.id ?? (forum ? MediaItem.forumSiteID : UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF0, 0xB0, 0x01))),
+                             siteName: i.siteName, title: i.title, thumbnailURL: thumb, mediaURL: media, pageURL: page,
+                             kind: MediaKind(rawValue: i.kind) ?? .image, duration: i.duration, categoryName: i.categoryName)
+        if let id = i.id, !id.isEmpty { item.id = id }
+        return item
     }
 
     /// Writes a backup file to share or save, and returns where it is.
@@ -67,8 +72,8 @@ enum Backup {
                           searchTemplate: $0.searchTemplate, renderMode: $0.renderMode.rawValue)
             },
             forums: ForumStore.shared.forums.map { ForumEntry(name: $0.name, url: $0.url.absoluteString) },
-            favorites: Library.shared.favorites.map(pack),
-            collections: CollectionStore.shared.collections.map { CollectionEntry(name: $0.name, items: $0.items.map(pack)) },
+            favorites: Library.shared.favorites.map { pack($0) },
+            collections: CollectionStore.shared.collections.map { CollectionEntry(name: $0.name, items: $0.items.map { pack($0) }) },
             settings: SettingsEntry(blockedWords: AppSettings.shared.blockedWords, reelsSource: AppSettings.shared.reelsSource))
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]

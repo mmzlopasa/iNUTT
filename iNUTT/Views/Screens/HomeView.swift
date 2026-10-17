@@ -13,10 +13,17 @@ struct HomeView: View {
     @ObservedObject private var seen = SeenMarks.shared
     @ObservedObject private var lock = LockManager.shared
 
-    private var enabled: [Site] { sites.enabledSites }
+    @ObservedObject private var forums = ForumStore.shared
+    @ObservedObject private var taste = Taste.shared
+
+    /// Forums stay in their own section: a forum added as a site is left off Home too.
+    private var enabled: [Site] {
+        let forumHosts = Set(forums.forums.compactMap { $0.url.host?.replacingOccurrences(of: "www.", with: "") })
+        return sites.enabledSites.filter { !forumHosts.contains($0.host) }
+    }
 
     private var mixed: [MediaItem] {
-        var all = engine.mixedFeed(enabled)
+        var all = engine.mixedFeed(enabled).filter { !$0.isFromForum }
         if settings.hideSeen { all = all.filter { !seen.contains($0) } }
         guard let filter = router.homeFilter else { return all }
         return all.filter { $0.kind == filter }
@@ -37,8 +44,12 @@ struct HomeView: View {
                         if items.isEmpty && enabled.allSatisfy({ $0.categories.isEmpty }) {
                             loadingOrEmpty
                         } else {
-                            if !items.isEmpty { HeroCarousel(items: Array(items.prefix(8))) }
+                            let picks = settings.smartMix ? taste.picks(from: items) : []
+                            if !items.isEmpty { HeroCarousel(items: Array((picks.isEmpty ? items : picks).prefix(8))) }
                             KindFilterBar(filter: $router.homeFilter)
+                            if picks.count >= 4 {
+                                PickedRow(items: picks)
+                            }
                             if router.homeFilter == nil || router.homeFilter == .video {
                                 ContinueWatchingRow()
                             }
@@ -121,9 +132,10 @@ struct HomeView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(greeting.uppercased()).font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
+                Text(greeting.uppercased()).font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2).lineLimit(1)
                 Wordmark(size: 30)
             }
+            .layoutPriority(1)
             Spacer()
             if engine.isRefreshingAll {
                 ProgressView().tint(Theme.gold).padding(.trailing, 4)
@@ -131,29 +143,45 @@ struct HomeView: View {
             if lock.isProtectionOn {
                 circleButton("lock.fill") { lock.lockNow() }
             }
-            circleButton(settings.privateMode ? "eye.slash.fill" : "eye", active: settings.privateMode) {
-                settings.privateMode.toggle()
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                DownloadManager.shared.show(settings.privateMode ? "Private mode on: nothing is remembered" : "Private mode off",
-                                            symbol: settings.privateMode ? "eye.slash.fill" : "eye")
+            if settings.privateMode {
+                circleButton("eye.slash.fill", active: true) { togglePrivate() }
             }
             circleButton("shuffle") { shuffle() }
-            circleButton("clock.arrow.circlepath") { showHistory = true }
-            circleButton("plus") { showAdd = true }
-            circleButton("gearshape.fill") { router.showSettings = true }
+            // The rest sits in one menu, so the logo always keeps its line.
+            Menu {
+                Button { showAdd = true } label: { Label("Add site", systemImage: "plus") }
+                Button { showHistory = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
+                Button { togglePrivate() } label: {
+                    Label(settings.privateMode ? "Turn off private mode" : "Private mode",
+                          systemImage: settings.privateMode ? "eye" : "eye.slash")
+                }
+                Divider()
+                Button { router.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+            } label: {
+                circleLabel("ellipsis")
+            }
         }
         .padding(.horizontal, 16)
     }
 
+    private func togglePrivate() {
+        settings.privateMode.toggle()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        DownloadManager.shared.show(settings.privateMode ? "Private mode on: nothing is remembered" : "Private mode off",
+                                    symbol: settings.privateMode ? "eye.slash.fill" : "eye")
+    }
+
     private func circleButton(_ symbol: String, active: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(active ? Theme.onGold : Theme.ink)
-                .frame(width: 38, height: 38)
-                .background(Circle().fill(active ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(Color.white.opacity(0.06))))
-                .overlay(Circle().strokeBorder(Theme.line2, lineWidth: 1))
-        }
+        Button(action: action) { circleLabel(symbol, active: active) }
+    }
+
+    private func circleLabel(_ symbol: String, active: Bool = false) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(active ? Theme.onGold : Theme.ink)
+            .frame(width: 38, height: 38)
+            .background(Circle().fill(active ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(Color.white.opacity(0.06))))
+            .overlay(Circle().strokeBorder(Theme.line2, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -315,7 +343,7 @@ struct ContinueWatchingRow: View {
     @EnvironmentObject private var viewer: ViewerState
 
     var body: some View {
-        let points = Array(store.continueWatching.prefix(20))
+        let points = Array(store.continueWatching.filter { !$0.item.isFromForum }.prefix(20))
         if !points.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(title: "Continue watching", subtitle: "\(points.count) unfinished")
@@ -361,15 +389,16 @@ struct WatchLaterRow: View {
     @EnvironmentObject private var viewer: ViewerState
 
     var body: some View {
-        let items = Array(later.items.prefix(20))
+        let all = later.items.filter { !$0.isFromForum }
+        let items = Array(all.prefix(20))
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeader(title: "Watch later", subtitle: "\(later.items.count) waiting")
+                SectionHeader(title: "Watch later", subtitle: "\(all.count) waiting")
                     .padding(.horizontal, 16)
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
-                            Button { viewer.open(later.items, at: i) } label: {
+                            Button { viewer.open(all, at: i) } label: {
                                 let a: CGFloat = item.kind == .video ? 16 / 11 : 4 / 5
                                 MediaCard(item: item, aspect: a).frame(width: 170 * a, height: 170)
                             }
@@ -380,6 +409,33 @@ struct WatchLaterRow: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 4)
                 }
+            }
+        }
+    }
+}
+
+/// What matches your taste best, learned from what you open, save and watch to the end.
+struct PickedRow: View {
+    let items: [MediaItem]
+    @EnvironmentObject private var viewer: ViewerState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Picked for you", subtitle: "Based on what you watch and save")
+                .padding(.horizontal, 16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                        Button { viewer.open(items, at: i) } label: {
+                            let a: CGFloat = item.kind == .video ? 16 / 11 : 4 / 5
+                            MediaCard(item: item, aspect: a).frame(width: 190 * a, height: 190)
+                        }
+                        .buttonStyle(CardPressStyle())
+                        .contextMenu { MediaContextMenu(item: item) } preview: { MediaPreview(item: item) }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
             }
         }
     }

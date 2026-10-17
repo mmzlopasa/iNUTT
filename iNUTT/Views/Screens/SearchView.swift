@@ -20,13 +20,13 @@ struct SearchView: View {
         guard !q.isEmpty else { return [] }
         var seen = Set<String>()
         let pool = engine.allCachedItems() + library.favorites + library.history.map(\.item)
-        return pool.filter { item in
+        return FeedEngine.dedupe(pool.filter { item in
             guard seen.insert(item.id).inserted else { return false }
             if let filter, item.kind != filter { return false }
             return item.title.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil
                 || item.siteName.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil
                 || (item.categoryName?.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil)
-        }
+        })
     }
 
     struct CategoryHit: Identifiable {

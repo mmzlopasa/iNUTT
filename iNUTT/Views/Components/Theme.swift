@@ -194,6 +194,8 @@ struct Wordmark: View {
             Text("iNUTT").font(Theme.display(size, .bold)).foregroundStyle(Theme.ink)
             Text(".").font(Theme.display(size, .bold)).foregroundStyle(Theme.gold)
         }
+        .lineLimit(1)
+        .fixedSize()
     }
 }
 

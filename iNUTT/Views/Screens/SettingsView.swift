@@ -108,6 +108,17 @@ struct SettingsView: View {
                 .listRowBackground(rowBG)
 
                 Section {
+                    Toggle(isOn: $settings.smartMix) { row("sparkles", "Picked for you") }
+                    Button(role: .destructive) { Taste.shared.reset() } label: { row("arrow.counterclockwise", "Forget what I like", tint: Theme.err) }
+                        .disabled(!settings.smartMix)
+                    Toggle(isOn: $settings.hideDuplicates) { row("square.on.square", "Hide duplicates") }
+                } header: { sectionTitle("Home") } footer: {
+                    Text("Picked for you learns from what you open, save, download and watch to the end, and shows the best matches first. Nothing is learned in private mode. Hide duplicates shows the same picture or video only once when several sites have it. Forums are never shown on Home.")
+                        .font(Theme.text(12)).foregroundStyle(Theme.muted)
+                }
+                .listRowBackground(rowBG)
+
+                Section {
                     Picker(selection: $settings.maxQuality) {
                         Text("4K (2160p)").tag(2160)
                         Text("1440p").tag(1440)
@@ -141,6 +152,14 @@ struct SettingsView: View {
                     Text(settings.vaultDownloads ? "Downloads are encrypted in the vault (Favorites › shield)." : "Downloads are also saved in the Files app › iNUTT.")
                         .font(Theme.text(12)).foregroundStyle(Theme.muted)
                 }
+                .listRowBackground(rowBG)
+
+                Section {
+                    NavigationLink { SyncSettingsView() } label: {
+                        row("arrow.triangle.2.circlepath.icloud", "Sync between devices",
+                            value: SyncManager.shared.isConfigured ? "On" : "Off")
+                    }
+                } header: { sectionTitle("Sync") }
                 .listRowBackground(rowBG)
 
                 Section {
@@ -609,5 +628,73 @@ struct BlockedWordsView: View {
         for p in parts where !list.contains(p) { list.append(p) }
         settings.blockedWords = list
         word = ""
+    }
+}
+
+/// Picks the shared folder and passphrase for keeping devices the same.
+struct SyncSettingsView: View {
+    @ObservedObject private var sync = SyncManager.shared
+    @State private var picking = false
+    @State private var passphrase = ""
+
+    var body: some View {
+        List {
+            Section {
+                Button { picking = true } label: {
+                    HStack {
+                        Label("Sync folder", systemImage: "folder").foregroundStyle(Theme.ink)
+                        Spacer()
+                        Text(sync.folderName ?? "Choose…").foregroundStyle(Theme.muted)
+                    }
+                }
+                HStack {
+                    SecureField(sync.hasPassphrase ? "Passphrase is set" : "Sync passphrase", text: $passphrase)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button("Save") {
+                        sync.setPassphrase(passphrase)
+                        passphrase = ""
+                        Task { await sync.sync() }
+                    }
+                    .disabled(passphrase.trimmingCharacters(in: .whitespaces).count < 6)
+                }
+            } footer: {
+                Text("Choose a folder in iCloud Drive or Google Drive (Files app), then on your other iPhone, Android or Windows device pick the same folder with the same passphrase. Favorites, collections and Watch later are merged; removing something removes it everywhere. The file is encrypted with the passphrase, which must be at least 6 characters and is never uploaded.")
+                    .font(Theme.text(12)).foregroundStyle(Theme.muted)
+            }
+            .listRowBackground(Theme.navy.opacity(0.6))
+
+            Section {
+                Button {
+                    Task { await sync.sync() }
+                } label: {
+                    HStack {
+                        Label(sync.syncing ? "Syncing…" : "Sync now", systemImage: "arrow.triangle.2.circlepath")
+                        Spacer()
+                        if let d = sync.lastSync {
+                            Text(d, style: .relative).foregroundStyle(Theme.muted)
+                        }
+                    }
+                }
+                .disabled(!sync.isConfigured || sync.syncing)
+                if let s = sync.status {
+                    Text(s).font(Theme.text(13)).foregroundStyle(Theme.err)
+                }
+                if sync.folderName != nil {
+                    Button(role: .destructive) { sync.stop() } label: { Label("Stop syncing", systemImage: "xmark.circle") }
+                }
+            }
+            .listRowBackground(Theme.navy.opacity(0.6))
+        }
+        .scrollContentBackground(.hidden)
+        .background(NightSky())
+        .navigationTitle("Sync between devices")
+        .navigationBarTitleDisplayMode(.inline)
+        .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
+            if case .success(let url) = result {
+                sync.setFolder(url)
+                Task { await sync.sync() }
+            }
+        }
     }
 }

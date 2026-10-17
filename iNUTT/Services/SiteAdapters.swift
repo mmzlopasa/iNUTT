@@ -212,6 +212,8 @@ enum SiteAdapters {
             var item = MediaItem(siteID: site.id, siteName: site.name, title: (p["label"] as? String) ?? "",
                                  thumbnailURL: thumb, mediaURL: v, pageURL: URL(string: "https://fikfap.com/"), kind: .video)
             item.id = MediaItem.hash(v.absoluteString)
+            let tags = fikfapTags(p)
+            if !tags.isEmpty { item.tags = tags }
             result.items.append(item)
         }
         if result.items.isEmpty { throw NetError.empty }
@@ -220,6 +222,20 @@ enum SiteAdapters {
             result.nextPage = next.url
         }
         return result
+    }
+
+    /// A post's hashtags, as a list of names or of objects with a label or name.
+    static func fikfapTags(_ p: [String: Any]) -> [String] {
+        let raw = (p["hashtags"] ?? p["tags"] ?? p["hashTags"]) as? [Any] ?? []
+        return raw.compactMap { t -> String? in
+            if let s = t as? String { return s }
+            if let d = t as? [String: Any] {
+                return (d["label"] ?? d["name"] ?? d["tag"] ?? d["hashtag"]) as? String
+            }
+            return nil
+        }
+        .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "# ")) }
+        .filter { !$0.isEmpty }
     }
 
     // MARK: VSCO

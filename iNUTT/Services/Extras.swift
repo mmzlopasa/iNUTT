@@ -53,6 +53,7 @@ final class ResumeStore: ObservableObject {
     /// Watched to the end: off the Continue watching row and out of Watch later.
     func finished(_ item: MediaItem) {
         WatchLater.shared.remove(item)
+        if points[item.id] != nil { Taste.shared.learn(item, .finished) }
         guard points.removeValue(forKey: item.id) != nil else { return }
         changed()
     }
@@ -107,6 +108,7 @@ final class WatchLater: ObservableObject {
         if ids.contains(item.id) { remove(item) } else {
             items.insert(item, at: 0)
             ids.insert(item.id)
+            Taste.shared.learn(item, .later)
             changed()
         }
     }
@@ -124,6 +126,14 @@ final class WatchLater: ObservableObject {
     func clear() {
         items = []
         ids = []
+        changed()
+    }
+
+    /// Used by sync: the queue as merged with your other devices.
+    func replaceAll(_ list: [MediaItem]) {
+        guard list.map(\.id) != items.map(\.id) else { return }
+        items = list
+        ids = Set(list.map(\.id))
         changed()
     }
 
@@ -343,5 +353,85 @@ enum NewContentWatcher {
         c.sound = .default
         c.badge = NSNumber(value: total)
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "new-content", content: c, trigger: nil))
+    }
+}
+
+// MARK: - Smart mix
+
+/// Learns what you open, save and watch to the end, and scores items by it for "Picked for you" on Home.
+@MainActor
+final class Taste: ObservableObject {
+    static let shared = Taste()
+    private(set) var weights: [String: Double] = [:]
+    private(set) var signals = 0
+    private var saveWork: DispatchWorkItem?
+    private struct Saved: Codable { var weights: [String: Double]; var signals: Int }
+
+    enum Signal: Double { case open = 1, later = 2, finished = 3, download = 3, favorite = 4 }
+
+    private init() {
+        if let s = Disk.load(Saved.self, "taste.json") {
+            weights = s.weights
+            signals = s.signals
+        }
+    }
+
+    /// Enough has been learned for the picks to mean something.
+    var isReady: Bool { signals >= 5 }
+
+    nonisolated static func features(_ item: MediaItem) -> [String] {
+        var f = ["s:" + item.siteID.uuidString, "k:" + item.kind.rawValue]
+        if let c = item.categoryName?.lowercased(), !c.isEmpty { f.append("c:" + c) }
+        let words = Set(item.title.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+            .filter { $0.count >= 4 && !$0.allSatisfy(\.isNumber) })
+        f += words.sorted().prefix(12).map { "w:" + $0 }
+        return f
+    }
+
+    func learn(_ item: MediaItem, _ signal: Signal) {
+        let s = AppSettings.shared
+        guard s.smartMix, !s.privateMode, !item.isFromForum else { return }
+        // Older taste fades slowly, so the mix follows what you like now.
+        if signals % 50 == 49 { weights = weights.mapValues { $0 * 0.9 }.filter { $0.value > 0.05 } }
+        for k in Self.features(item) { weights[k, default: 0] += signal.rawValue }
+        if weights.count > 3000 {
+            weights = Dictionary(uniqueKeysWithValues: weights.sorted { $0.value > $1.value }.prefix(2500).map { ($0.key, $0.value) })
+        }
+        signals += 1
+        saveWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            Disk.save(Saved(weights: self.weights, signals: self.signals), "taste.json")
+        }
+        saveWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: w)
+    }
+
+    func score(_ item: MediaItem) -> Double {
+        var total = 0.0
+        for k in Self.features(item) {
+            guard let w = weights[k] else { continue }
+            let factor: Double = k.hasPrefix("s:") ? 0.6 : k.hasPrefix("k:") ? 0.3 : 1
+            total += log1p(w) * factor
+        }
+        return total
+    }
+
+    /// The best matches among the given items, new ones first.
+    func picks(from items: [MediaItem], limit: Int = 20) -> [MediaItem] {
+        guard isReady else { return [] }
+        let seen = SeenMarks.shared
+        let scored = items.prefix(1500).compactMap { i -> (MediaItem, Double)? in
+            let s = score(i) * (seen.contains(i) ? 0.4 : 1)
+            return s > 0 ? (i, s) : nil
+        }
+        return scored.sorted { $0.1 > $1.1 }.prefix(limit).map(\.0)
+    }
+
+    func reset() {
+        weights = [:]
+        signals = 0
+        Disk.save(Saved(weights: [:], signals: 0), "taste.json")
+        objectWillChange.send()
     }
 }

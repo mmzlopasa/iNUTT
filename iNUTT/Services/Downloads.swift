@@ -49,6 +49,7 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     func download(_ item: MediaItem) async {
+        Taste.shared.learn(item, .download)
         guard progress[item.id] == nil else { return }
         if await perform(item, batch: nil) {
             UINotificationFeedbackGenerator().notificationOccurred(.success)

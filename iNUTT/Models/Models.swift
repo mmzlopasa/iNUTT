@@ -49,6 +49,8 @@ struct MediaItem: Codable, Identifiable, Hashable {
     var isListing: Bool?
     /// Every image of a multi-image post (Reddit galleries).
     var gallery: [URL]?
+    /// Hashtags the site gives for this post (FikFap and similar apps).
+    var tags: [String]?
 
     init(siteID: UUID, siteName: String, title: String, thumbnailURL: URL?, mediaURL: URL?, pageURL: URL?,
          kind: MediaKind, duration: String? = nil, categoryName: String? = nil, addedAt: Date = Date()) {
@@ -76,6 +78,59 @@ struct MediaItem: Codable, Identifiable, Hashable {
     }
 
     var referer: URL? { pageURL ?? thumbnailURL }
+
+    /// The post's hashtags: the ones the site gave, plus any #words written in the title.
+    var hashtags: [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+        for t in (tags ?? []) + Self.inlineTags(title) {
+            let clean = t.trimmingCharacters(in: CharacterSet(charactersIn: "# ").union(.whitespacesAndNewlines))
+            if !clean.isEmpty, seen.insert(clean.lowercased()).inserted { out.append(clean) }
+        }
+        return out
+    }
+
+    /// The title with its #words taken out, for when they are shown as tags.
+    var titleWithoutTags: String {
+        title.split(separator: " ").filter { !$0.hasPrefix("#") }.joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func inlineTags(_ s: String) -> [String] {
+        s.split { $0 == " " || $0 == "\n" }.filter { $0.hasPrefix("#") && $0.count > 1 }.map { String($0.dropFirst()) }
+    }
+
+    /// Pictures and videos collected from a forum thread carry this site id.
+    static let forumSiteID = UUID(uuidString: "00000000-0000-0000-0000-0000000F0A0B")!
+    var isFromForum: Bool { siteID == Self.forumSiteID }
+
+    /// Ways to recognise the same picture or video when another site shows it:
+    /// the file name of the media or its thumbnail (when it is distinctive), or a long title with its length.
+    var duplicateKeys: [String] {
+        var keys: [String] = []
+        if let m = mediaURL, let k = Self.fileKey(m, minLength: 10) { keys.append("m:" + k) }
+        if let t = thumbnailURL, let k = Self.fileKey(t, minLength: 16) { keys.append("i:" + k) }
+        let words = title.lowercased().split { !$0.isLetter && !$0.isNumber }
+        if words.count >= 4 {
+            let t = words.joined(separator: " ")
+            if t.count >= 16 {
+                let d = (duration ?? "").filter(\.isNumber)
+                if !d.isEmpty { keys.append("t:\(t)|\(d)") } else if words.count >= 6 { keys.append("t:" + t) }
+            }
+        }
+        return keys
+    }
+
+    private static let sizeSuffix = try! NSRegularExpression(
+        pattern: "([-_.](\\d{2,4}x\\d{2,4}|\\d{3,4}p|thumb|thumbnail|small|medium|large|orig|original|preview|poster|hd|sd))+$")
+
+    private static func fileKey(_ url: URL, minLength: Int) -> String? {
+        var stem = url.deletingPathExtension().lastPathComponent.lowercased()
+        let range = NSRange(stem.startIndex..., in: stem)
+        stem = sizeSuffix.stringByReplacingMatches(in: stem, range: range, withTemplate: "")
+        guard stem.count >= minLength, stem.contains(where: \.isNumber) || stem.count >= 20 else { return nil }
+        return stem
+    }
 
     /// The category this item opens when it is a listing tile.
     var asCategory: SiteCategory? {

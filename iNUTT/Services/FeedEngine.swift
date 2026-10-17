@@ -126,8 +126,21 @@ final class FeedEngine: ObservableObject {
                 if l[i].isListing != true, seen.insert(l[i].id).inserted { out.append(l[i]) }
             }
         }
+        out = Self.dedupe(out)
         mixedCache = (version, ids, out)
         return out
+    }
+
+    /// Keeps the first of items that are the same picture or video on different sites.
+    static func dedupe(_ items: [MediaItem]) -> [MediaItem] {
+        guard AppSettings.shared.hideDuplicates else { return items }
+        var seen = Set<String>()
+        return items.filter { item in
+            let keys = item.duplicateKeys
+            if keys.contains(where: seen.contains) { return false }
+            seen.formUnion(keys)
+            return true
+        }
     }
 
     func allCachedItems() -> [MediaItem] {
@@ -584,7 +597,7 @@ final class FeedEngine: ObservableObject {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
         let sites = SiteStore.shared.enabledSites
-        return await withTaskGroup(of: [MediaItem].self) { group in
+        let found = await withTaskGroup(of: [MediaItem].self) { group in
             for s in sites { group.addTask { await Self.search(q, on: s) } }
             var lists: [[MediaItem]] = []
             for await l in group { lists.append(l) }
@@ -593,6 +606,7 @@ final class FeedEngine: ObservableObject {
             for i in 0..<maxLen { for l in lists where i < l.count { out.append(l[i]) } }
             return out
         }
+        return Self.dedupe(found)
     }
 
     nonisolated static func search(_ q: String, on site: Site) async -> [MediaItem] {

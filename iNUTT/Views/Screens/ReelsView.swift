@@ -484,8 +484,25 @@ struct ReelPage: View {
             HStack(alignment: .bottom, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.siteName.uppercased()).font(Theme.mono(10)).foregroundStyle(Theme.gold).tracking(1)
-                    if !item.title.isEmpty {
-                        Text(item.title).font(Theme.text(15, .medium)).foregroundStyle(.white).lineLimit(3)
+                    let tags = item.hashtags
+                    let title = tags.isEmpty ? item.title : item.titleWithoutTags
+                    if !title.isEmpty {
+                        Text(title).font(Theme.text(15, .medium)).foregroundStyle(.white).lineLimit(3)
+                    }
+                    if !tags.isEmpty {
+                        // Kept in the area above the tab bar, scrolling sideways when there are many.
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(tags.prefix(20), id: \.self) { t in
+                                    Text("#" + t)
+                                        .font(Theme.text(13, .semibold))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 9).frame(height: 24)
+                                        .background(Capsule().fill(Color.white.opacity(0.16)))
+                                }
+                            }
+                        }
+                        .frame(height: 26)
                     }
                 }
                 Spacer()
@@ -499,9 +516,17 @@ struct ReelPage: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 110)
-            .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom).frame(height: 260), alignment: .bottom)
+            .padding(.bottom, Self.aboveTabBar)
+            .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom).frame(height: 300), alignment: .bottom)
         }
+    }
+
+    /// The page runs under the floating tab bar, so the title and hashtags start above it
+    /// (tab bar 66 + its gap 6 + room to breathe), whatever the phone's home indicator needs.
+    static var aboveTabBar: CGFloat {
+        let safe = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first { $0.isKeyWindow }?.safeAreaInsets.bottom ?? 0
+        return safe + 86
     }
 
     private func side(_ symbol: String, _ on: Bool, action: @escaping () -> Void) -> some View {

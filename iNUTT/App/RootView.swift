@@ -86,7 +86,10 @@ struct RootView: View {
             if p == .active {
                 UIApplication.shared.applicationIconBadgeNumber = 0
                 OfflineStore.shared.sync()
+                SyncManager.shared.syncIfNeeded()
             }
+            // Changes made just now reach your other devices before iOS suspends the app.
+            if p == .background { SyncManager.shared.syncInBackground() }
         }
         .task {
             guard !didStart else { return }
@@ -95,6 +98,7 @@ struct RootView: View {
             engine.scheduleBackgroundRefresh()
             downloads.resumeQueue()
             OfflineStore.shared.sync()
+            SyncManager.shared.syncIfNeeded()
             if engine.isStale { await engine.refreshAll() }
         }
     }
