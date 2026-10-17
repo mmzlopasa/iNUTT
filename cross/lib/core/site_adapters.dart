@@ -261,4 +261,154 @@ class SiteAdapters {
     if (lastId != null) result.nextPage = site.url.replace(queryParameters: {'inuttAfter': lastId});
     return result;
   }
+
+  // VSCO
+
+  /// A VSCO profile: vsco.co/name or vsco.co/name/gallery.
+  static bool isVsco(Uri url) {
+    final h = url.host.toLowerCase();
+    return (h == 'vsco.co' || h.endsWith('.vsco.co')) && vscoUser(url) != null;
+  }
+
+  static String? vscoUser(Uri url) {
+    final parts = url.pathSegments.where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty || const ['api', 'search', 'feed', 'user', 'spaces', 'discover'].contains(parts.first.toLowerCase())) return null;
+    return parts.first;
+  }
+
+  /// Token and site id per profile, read once from its page.
+  static final Map<String, (String, String)> _vscoKeys = {};
+
+  /// The token VSCO's own web page uses for visitors.
+  static const _vscoPublicToken = '7356455548d0a1d886db010883388d08be84d0c9';
+
+  static Uri? vscoAbsolute(Object? raw) {
+    if (raw is! String || raw.isEmpty) return null;
+    var s = raw;
+    if (s.startsWith('//')) {
+      s = 'https:$s';
+    } else if (!s.toLowerCase().startsWith('http')) {
+      s = 'https://$s';
+    }
+    return Uri.tryParse(s);
+  }
+
+  /// The profile's pictures and videos straight from VSCO's API, newest first, 30 per page.
+  static Future<ScrapeResult> vscoFeed(Site site, Uri url) async {
+    final user = vscoUser(site.url) ?? vscoUser(url);
+    if (user == null) throw NetException('The page is empty.');
+    final cursor = url.queryParameters['inuttCursor'];
+    final profile = Uri.parse('https://vsco.co/$user/gallery');
+    final result = ScrapeResult();
+    var keys = _vscoKeys[user.toLowerCase()];
+    var preloaded = <Map>[];
+    if (keys == null) {
+      final state = vscoState((await Net.fetch(profile)).text);
+      if (state == null) throw NetException('The page is empty.');
+      final token = ((state['users'] as Map?)?['currentUser'] as Map?)?['tkn'] as String? ?? _vscoPublicToken;
+      final sites = (state['sites'] as Map?)?['siteByUsername'] as Map?;
+      Object? entry = sites?[user];
+      if (entry == null && sites != null) {
+        for (final k in sites.keys) {
+          if ('$k'.toLowerCase() == user.toLowerCase()) entry = sites[k];
+        }
+      }
+      final info = (entry as Map?)?['site'] as Map?;
+      if (info?['id'] != null) {
+        keys = (token, '${info!['id']}');
+        _vscoKeys[user.toLowerCase()] = keys;
+      }
+      result.title = info?['name'] as String?;
+      preloaded = (((state['entities'] as Map?)?['images'] as Map?)?.values ?? const []).whereType<Map>().toList();
+    }
+    if (keys != null) {
+      try {
+        final api = Uri.https('vsco.co', '/api/3.0/medias/profile', {'site_id': keys.$2, 'limit': '30', 'cursor': ?cursor});
+        final f = await Net.fetch(
+          api,
+          referer: profile,
+          headers: {
+            HttpHeaders.acceptHeader: 'application/json',
+            'Authorization': 'Bearer ${keys.$1}',
+            'X-Client-Platform': 'web',
+            'X-Client-Build': '1',
+          },
+        );
+        final json = jsonDecode(f.text);
+        if (json is Map) {
+          for (final m in (json['media'] as List? ?? const []).whereType<Map>()) {
+            final body = m[m['type'] ?? 'image'];
+            final item = body is Map ? _vscoItem(body, user, site) : null;
+            if (item != null) result.items.add(item);
+          }
+          final next = json['next_cursor'];
+          if (next is String && next.isNotEmpty) result.nextPage = site.url.replace(queryParameters: {'inuttCursor': next});
+        }
+      } catch (_) {}
+    }
+    // The API refused: the first pictures are in the page itself.
+    if (result.items.isEmpty && cursor == null) {
+      preloaded.sort((a, b) => ((b['uploadDate'] as num?) ?? 0).compareTo((a['uploadDate'] as num?) ?? 0));
+      result.items.addAll(preloaded.map((m) => _vscoItem(m, user, site)).whereType<MediaItem>());
+    }
+    if (result.items.isEmpty) throw NetException('The page is empty.');
+    return result;
+  }
+
+  static MediaItem? _vscoItem(Map m, String user, Site site) {
+    String? str(List<String> keys) {
+      for (final k in keys) {
+        final v = m[k];
+        if (v is String && v.isNotEmpty) return v;
+      }
+      return null;
+    }
+
+    final isVideo = (m['is_video'] ?? m['isVideo']) == true;
+    final image = vscoAbsolute(str(['responsive_url', 'responsiveUrl']));
+    final video = vscoAbsolute(str(['video_url', 'videoUrl', 'playback_url', 'playbackUrl']));
+    final poster = vscoAbsolute(str(['poster_url', 'posterUrl'])) ?? image;
+    final Uri media;
+    final MediaKind kind;
+    if (video != null && (isVideo || image == null)) {
+      media = video;
+      kind = MediaKind.video;
+    } else if (image != null) {
+      media = image;
+      kind = image.path.toLowerCase().endsWith('.gif') ? MediaKind.gif : MediaKind.image;
+    } else {
+      return null;
+    }
+    final thumb = poster != null && poster.host.contains('im.vsco.co') ? poster.replace(queryParameters: {'w': '600'}) : poster;
+    final id = str(['_id', 'id']);
+    final page = vscoAbsolute(str(['permalink'])) ?? (id == null ? null : Uri.parse('https://vsco.co/$user/media/$id'));
+    return MediaItem(
+      id: hashKey(media.toString()),
+      siteId: site.id,
+      siteName: site.name,
+      title: str(['description', 'caption']) ?? '',
+      thumbnailUrl: thumb,
+      mediaUrl: media,
+      pageUrl: page,
+      kind: kind,
+    );
+  }
+
+  /// The JSON VSCO puts in its pages for the app to start from.
+  static Map? vscoState(String html) {
+    final i = html.indexOf('__PRELOADED_STATE__ = ');
+    if (i < 0) return null;
+    final rest = html.substring(i + 22);
+    final end = rest.indexOf('</script>');
+    var json = (end < 0 ? rest : rest.substring(0, end)).trim();
+    while (json.endsWith(';')) {
+      json = json.substring(0, json.length - 1);
+    }
+    try {
+      final j = jsonDecode(json.replaceAll('":undefined', '":null'));
+      return j is Map ? j : null;
+    } catch (_) {
+      return null;
+    }
+  }
 }

@@ -221,4 +221,131 @@ enum SiteAdapters {
         }
         return result
     }
+
+    // MARK: VSCO
+
+    /// A VSCO profile: vsco.co/name or vsco.co/name/gallery.
+    static func isVSCO(_ url: URL) -> Bool {
+        guard let h = url.host?.lowercased(), h == "vsco.co" || h.hasSuffix(".vsco.co") else { return false }
+        return vscoUser(url) != nil
+    }
+
+    static func vscoUser(_ url: URL) -> String? {
+        let parts = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        guard let first = parts.first, !["api", "search", "feed", "user", "spaces", "discover"].contains(first.lowercased()) else { return nil }
+        return first
+    }
+
+    /// Token and site id per profile, read once from its page.
+    private final class VSCOKeys: @unchecked Sendable {
+        let lock = NSLock()
+        var byUser: [String: (token: String, siteID: String)] = [:]
+    }
+    private static let vscoKeys = VSCOKeys()
+    /// The token VSCO's own web page uses for visitors.
+    private static let vscoPublicToken = "7356455548d0a1d886db010883388d08be84d0c9"
+
+    static func vscoAbsolute(_ raw: String?) -> URL? {
+        guard var s = raw, !s.isEmpty else { return nil }
+        if s.hasPrefix("//") { s = "https:" + s } else if !s.lowercased().hasPrefix("http") { s = "https://" + s }
+        return URL(string: s)
+    }
+
+    /// The profile's pictures and videos straight from VSCO's API, newest first, 30 per page.
+    static func vscoFeed(site: Site, url: URL) async throws -> ScrapeResult {
+        guard let user = vscoUser(site.url) ?? vscoUser(url) else { throw NetError.empty }
+        let cursor = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "inuttCursor" }?.value
+        let profile = URL(string: "https://vsco.co/\(user)/gallery")!
+        var result = ScrapeResult()
+        var keys = vscoKeys.lock.withLock { vscoKeys.byUser[user.lowercased()] }
+        var preloaded: [[String: Any]] = []
+        if keys == nil {
+            let (data, resp) = try await Net.fetch(profile)
+            let html = Net.text(data, response: resp)
+            guard let state = vscoState(html) else { throw NetError.empty }
+            let token = ((state["users"] as? [String: Any])?["currentUser"] as? [String: Any])?["tkn"] as? String ?? vscoPublicToken
+            let sites = (state["sites"] as? [String: Any])?["siteByUsername"] as? [String: Any]
+            let entry = (sites?[user] ?? sites?.first { $0.key.caseInsensitiveCompare(user) == .orderedSame }?.value) as? [String: Any]
+            let siteInfo = entry?["site"] as? [String: Any]
+            if let id = siteInfo?["id"] {
+                keys = (token, "\(id)")
+                vscoKeys.lock.withLock { vscoKeys.byUser[user.lowercased()] = keys }
+            }
+            result.title = siteInfo?["name"] as? String
+            preloaded = ((state["entities"] as? [String: Any])?["images"] as? [String: Any])?.values.compactMap { $0 as? [String: Any] } ?? []
+        }
+        if let keys {
+            var comps = URLComponents(string: "https://vsco.co/api/3.0/medias/profile")!
+            comps.queryItems = [URLQueryItem(name: "site_id", value: keys.siteID), URLQueryItem(name: "limit", value: "30")]
+                + (cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? [])
+            var req = URLRequest(url: comps.url!, cachePolicy: .reloadIgnoringLocalCacheData)
+            req.setValue(Net.userAgent, forHTTPHeaderField: "User-Agent")
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.setValue("Bearer " + keys.token, forHTTPHeaderField: "Authorization")
+            req.setValue("web", forHTTPHeaderField: "X-Client-Platform")
+            req.setValue("1", forHTTPHeaderField: "X-Client-Build")
+            req.setValue(profile.absoluteString, forHTTPHeaderField: "Referer")
+            if let (data, resp) = try? await Net.session.data(for: req),
+               ((resp as? HTTPURLResponse)?.statusCode ?? 500) < 400,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for m in json["media"] as? [[String: Any]] ?? [] {
+                    let type = m["type"] as? String ?? "image"
+                    guard let body = m[type] as? [String: Any] else { continue }
+                    if let item = vscoItem(body, user: user, site: site) { result.items.append(item) }
+                }
+                if let next = json["next_cursor"] as? String, !next.isEmpty,
+                   var n = URLComponents(url: site.url, resolvingAgainstBaseURL: false) {
+                    n.queryItems = [URLQueryItem(name: "inuttCursor", value: next)]
+                    result.nextPage = n.url
+                }
+            }
+        }
+        // The API refused: the first pictures are in the page itself.
+        if result.items.isEmpty && cursor == nil {
+            let sorted = preloaded.sorted { ($0["uploadDate"] as? Double ?? 0) > ($1["uploadDate"] as? Double ?? 0) }
+            result.items = sorted.compactMap { vscoItem($0, user: user, site: site) }
+        }
+        if result.items.isEmpty { throw NetError.empty }
+        return result
+    }
+
+    private static func vscoItem(_ m: [String: Any], user: String, site: Site) -> MediaItem? {
+        func str(_ keys: String...) -> String? { keys.lazy.compactMap { m[$0] as? String }.first { !$0.isEmpty } }
+        let isVideo = (m["is_video"] as? Bool) ?? (m["isVideo"] as? Bool) ?? false
+        let image = vscoAbsolute(str("responsive_url", "responsiveUrl"))
+        let video = vscoAbsolute(str("video_url", "videoUrl", "playback_url", "playbackUrl"))
+        let poster = vscoAbsolute(str("poster_url", "posterUrl")) ?? image
+        let media: URL?
+        let kind: MediaKind
+        if let video, isVideo || image == nil {
+            media = video
+            kind = .video
+        } else if let image {
+            media = image
+            kind = image.pathExtension.lowercased() == "gif" ? .gif : .image
+        } else { return nil }
+        guard let media else { return nil }
+        var thumb = poster
+        if let p = poster, p.host?.contains("im.vsco.co") == true, var c = URLComponents(url: p, resolvingAgainstBaseURL: false) {
+            c.queryItems = [URLQueryItem(name: "w", value: "600")]
+            thumb = c.url ?? p
+        }
+        let id = str("_id", "id")
+        let page = vscoAbsolute(str("permalink")) ?? id.flatMap { URL(string: "https://vsco.co/\(user)/media/\($0)") }
+        var item = MediaItem(siteID: site.id, siteName: site.name, title: str("description", "caption") ?? "",
+                             thumbnailURL: thumb, mediaURL: media, pageURL: page, kind: kind)
+        item.id = MediaItem.hash(media.absoluteString)
+        return item
+    }
+
+    /// The JSON VSCO puts in its pages for the app to start from.
+    static func vscoState(_ html: String) -> [String: Any]? {
+        guard let start = html.range(of: "__PRELOADED_STATE__ = ") else { return nil }
+        let rest = html[start.upperBound...]
+        let end = rest.range(of: "</script>")?.lowerBound ?? rest.endIndex
+        var json = String(rest[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        while json.hasSuffix(";") { json.removeLast() }
+        json = json.replacingOccurrences(of: "\":undefined", with: "\":null")
+        return (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any]
+    }
 }

@@ -321,6 +321,9 @@ final class FeedEngine: ObservableObject {
             }
         }
         // App-only sites: read their feed API.
+        if SiteAdapters.isVSCO(url) || SiteAdapters.isVSCO(site.url) {
+            if let r = try? await SiteAdapters.vscoFeed(site: site, url: url) { return r }
+        }
         if SiteAdapters.isFikFap(url) {
             let after = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "inuttAfter" }?.value
             if let r = try? await SiteAdapters.fikfapFeed(site: site, after: after) { return r }

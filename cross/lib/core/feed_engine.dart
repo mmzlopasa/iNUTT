@@ -328,6 +328,11 @@ class FeedEngine extends ChangeNotifier {
       }
     }
     // App-only sites: read their feed API.
+    if (SiteAdapters.isVsco(url) || SiteAdapters.isVsco(site.url)) {
+      try {
+        return await SiteAdapters.vscoFeed(site, url);
+      } catch (_) {}
+    }
     if (SiteAdapters.isFikFap(url)) {
       try {
         return await SiteAdapters.fikfapFeed(site, url.queryParameters['inuttAfter']);
