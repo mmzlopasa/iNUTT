@@ -334,7 +334,7 @@ struct MediaPreview: View {
                 RemoteImage(url: full, referer: referer, maxPixel: 1400, contentMode: .fit, showsPlaceholder: false)
             }
             if let player {
-                PlayerLayerView(player: player)
+                PreviewPlayerView(player: player)
             }
         }
         .frame(width: size.width, height: size.height)
@@ -363,7 +363,7 @@ struct MediaPreview: View {
 }
 
 /// A bare video surface without controls.
-struct PlayerLayerView: UIViewRepresentable {
+struct PreviewPlayerView: UIViewRepresentable {
     let player: AVPlayer
 
     final class LayerView: UIView {
