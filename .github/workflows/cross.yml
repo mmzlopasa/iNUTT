@@ -76,6 +76,10 @@ jobs:
           New-Item -ItemType Directory -Force -Path ..\out\iNUTT\app | Out-Null
           Copy-Item -Recurse -Force build\windows\x64\runner\Release\* ..\out\iNUTT\app\
           Copy-Item -Force windows\launcher\iNUTT.exe ..\out\iNUTT\iNUTT.exe
+          # The Visual C++ runtime goes along, so PCs without it installed still start the app.
+          foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item -Force "$env:WINDIR\System32\$dll" ..\out\iNUTT\app\
+          }
           Get-ChildItem ..\out\iNUTT | Format-Table Name
           Compress-Archive -Path ..\out\iNUTT -DestinationPath ..\iNUTT-windows.zip -Force
       - uses: actions/upload-artifact@v4
