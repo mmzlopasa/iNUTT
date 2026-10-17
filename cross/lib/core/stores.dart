@@ -138,6 +138,10 @@ class Library extends ChangeNotifier {
   List<MediaItem> favorites = [];
   List<HistoryEntry> history = [];
   final Set<String> _favIds = {};
+  final Set<String> _seenIds = {};
+
+  /// Already opened once; cards show it.
+  bool isSeen(MediaItem i) => _seenIds.contains(i.id);
 
   /// Changes only when favorites change, so grids don't redraw on every history entry.
   final ValueNotifier<int> favoritesVersion = ValueNotifier(0);
@@ -148,6 +152,7 @@ class Library extends ChangeNotifier {
     final h = Disk.load('history.json');
     if (h is List) history = h.map((e) => HistoryEntry.fromJson(e as Map<String, dynamic>)).toList();
     _favIds.addAll(favorites.map((e) => e.id));
+    _seenIds.addAll(history.map((e) => e.item.id));
   }
 
   bool isFavorite(MediaItem i) => _favIds.contains(i.id);
@@ -168,17 +173,25 @@ class Library extends ChangeNotifier {
     if (!AppSettings.shared.historyEnabled || item.isListing) return;
     history.removeWhere((e) => e.item.id == item.id);
     history.insert(0, HistoryEntry(item: item, viewedAt: DateTime.now()));
+    // Grids redraw once, the first time something is opened.
+    if (_seenIds.add(item.id)) favoritesVersion.value++;
     if (history.length > Limits.maxHistory) history = history.sublist(0, Limits.maxHistory);
     _saveHistory();
   }
 
   void removeHistory(Set<String> ids) {
     history.removeWhere((e) => ids.contains(e.id));
+    _seenIds
+      ..clear()
+      ..addAll(history.map((e) => e.item.id));
+    favoritesVersion.value++;
     _saveHistory();
   }
 
   void clearHistory() {
     history = [];
+    _seenIds.clear();
+    favoritesVersion.value++;
     _saveHistory();
   }
 
@@ -222,6 +235,14 @@ class AppSettings extends ChangeNotifier {
   set onboarded(bool v) => _sb('onboarded', v);
   bool get hideInSwitcher => _b('hideInSwitcher', false);
   set hideInSwitcher(bool v) => _sb('hideInSwitcher', v);
+
+  /// Reels move on to the next video when one ends.
+  bool get reelsAutoNext => _b('reelsAutoNext', false);
+  set reelsAutoNext(bool v) => _sb('reelsAutoNext', v);
+
+  /// Home leaves out what you have already opened.
+  bool get hideSeen => _b('hideSeen', false);
+  set hideSeen(bool v) => _sb('hideSeen', v);
 
   /// The one link the Reels tab plays from.
   String get reelsSource => _p.getString('reelsSource') ?? '';

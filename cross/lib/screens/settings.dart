@@ -130,6 +130,12 @@ class _SettingsViewState extends State<SettingsView> {
                 SwitchRow(icon: Icons.play_circle_rounded, title: 'Autoplay', value: s.autoplay, onChanged: (v) => s.autoplay = v),
                 SwitchRow(icon: Icons.repeat_rounded, title: 'Loop videos', value: s.loopVideos, onChanged: (v) => s.loopVideos = v),
                 SwitchRow(icon: Icons.volume_off_rounded, title: 'Start muted', value: s.startMuted, onChanged: (v) => s.startMuted = v),
+                SwitchRow(
+                    icon: Icons.keyboard_double_arrow_down_rounded,
+                    title: 'Reels: next video when one ends',
+                    value: s.reelsAutoNext,
+                    onChanged: (v) => s.reelsAutoNext = v),
+                SwitchRow(icon: Icons.visibility_off_rounded, title: 'Hide watched on Home', value: s.hideSeen, onChanged: (v) => s.hideSeen = v),
               ]),
               Section(
                 title: 'Downloads & storage',

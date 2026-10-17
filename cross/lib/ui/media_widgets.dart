@@ -61,7 +61,23 @@ class MediaCard extends StatelessWidget {
                 ),
               ),
             ),
-            Positioned(top: 8, left: 8, child: KindBadge(item: item)),
+            // Already opened: dimmed, so new things stand out.
+            if (Library.shared.isSeen(item)) const ColoredBox(color: Color(0x59000000)),
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                KindBadge(item: item),
+                if (Library.shared.isSeen(item))
+                  Container(
+                    width: 22,
+                    height: 22,
+                    margin: const EdgeInsets.only(left: 4),
+                    decoration: const BoxDecoration(color: Color(0x99000000), shape: BoxShape.circle),
+                    child: const Icon(Icons.visibility_rounded, size: 13, color: Colors.white),
+                  ),
+              ]),
+            ),
             if (Library.shared.isFavorite(item))
               const Positioned(top: 8, right: 8, child: Icon(Icons.favorite_rounded, size: 18, color: T.gold)),
             if (item.title.isNotEmpty)

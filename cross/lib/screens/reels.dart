@@ -329,6 +329,10 @@ class _ReelsViewState extends State<ReelsView> {
                   key: ValueKey(store.items[i].id),
                   item: store.items[i],
                   active: _active && i == _index,
+                  onEnded: () {
+                    if (!_page.hasClients || i != _index || i + 1 >= store.items.length) return;
+                    _page.nextPage(duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
+                  },
                 ),
               ),
               _topBar(context),
@@ -441,7 +445,10 @@ class _SourceFieldState extends State<_SourceField> {
 class ReelPage extends StatefulWidget {
   final MediaItem item;
   final bool active;
-  const ReelPage({super.key, required this.item, required this.active});
+
+  /// Called when the video reached its end with Reels auto-scroll on.
+  final VoidCallback? onEnded;
+  const ReelPage({super.key, required this.item, required this.active, this.onEnded});
 
   @override
   State<ReelPage> createState() => _ReelPageState();
@@ -470,6 +477,8 @@ class _ReelPageState extends State<ReelPage> {
     if (old.active == widget.active) return;
     if (widget.active) {
       Library.shared.record(widget.item);
+      // Coming back to a reel that already ended: start it over.
+      if (_player?.state.completed ?? false) _player?.seek(Duration.zero);
       if (!_paused) _player?.play();
     } else {
       _player?.pause();
@@ -514,7 +523,18 @@ class _ReelPageState extends State<ReelPage> {
     final p = Player(configuration: const PlayerConfiguration(bufferSize: 16 * 1024 * 1024));
     final v = VideoController(p);
     _watch(p);
-    await p.setPlaylistMode(PlaylistMode.single);
+    final autoNext = AppSettings.shared.reelsAutoNext;
+    if (autoNext) {
+      _subs.add(p.stream.completed.listen((done) {
+        if (!done || !mounted) return;
+        if (widget.active && widget.onEnded != null) {
+          widget.onEnded!();
+        } else {
+          p.seek(Duration.zero);
+        }
+      }));
+    }
+    await p.setPlaylistMode(autoNext ? PlaylistMode.none : PlaylistMode.single);
     if (_muted) await p.setVolume(0);
     await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer)), play: widget.active && !_paused);
     if (!mounted) {

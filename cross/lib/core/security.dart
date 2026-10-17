@@ -47,6 +47,13 @@ class LockManager extends ChangeNotifier {
     }
   }
 
+  /// Locks right away, from the Home lock button.
+  void lockNow() {
+    if (!hasLock) return;
+    isLocked = true;
+    notifyListeners();
+  }
+
   void unlock() {
     isLocked = false;
     notifyListeners();

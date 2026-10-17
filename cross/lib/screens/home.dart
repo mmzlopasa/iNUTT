@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/feed_engine.dart';
 import '../core/models.dart';
+import '../core/security.dart';
 import '../core/stores.dart';
 import '../ui/media_widgets.dart';
 import '../ui/remote_image.dart';
@@ -67,11 +69,12 @@ class _HomeViewState extends State<HomeView> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: Listenable.merge([FeedEngine.shared, SiteStore.shared, Library.shared.favoritesVersion]),
+        listenable: Listenable.merge([FeedEngine.shared, SiteStore.shared, Library.shared.favoritesVersion, AppSettings.shared]),
         builder: (context, _) {
           final engine = FeedEngine.shared;
           final enabled = SiteStore.shared.enabledSites;
           var items = engine.mixedFeed(enabled);
+          if (AppSettings.shared.hideSeen) items = items.where((e) => !Library.shared.isSeen(e)).toList();
           if (_filter != null) items = items.where((e) => e.kind == _filter).toList();
           final slivers = <Widget>[
             SliverToBoxAdapter(child: SafeArea(bottom: false, child: _header(context))),
@@ -153,6 +156,18 @@ class _HomeViewState extends State<HomeView> {
         },
       );
 
+  /// Opens everything Home shows in random order.
+  void _shuffle() {
+    var items = FeedEngine.shared.mixedFeed(SiteStore.shared.enabledSites).where((e) => !e.isListing).toList();
+    if (AppSettings.shared.hideSeen) items = items.where((e) => !Library.shared.isSeen(e)).toList();
+    final f = _filter;
+    if (f != null) items = items.where((e) => e.kind == f).toList();
+    if (items.isEmpty) return;
+    HapticFeedback.lightImpact();
+    items.shuffle();
+    AppRouter.shared.open(items.take(300).toList(), 0);
+  }
+
   void _add(BuildContext context) =>
       Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AddSiteView(), fullscreenDialog: true));
 
@@ -167,10 +182,13 @@ class _HomeViewState extends State<HomeView> {
           ),
           if (FeedEngine.shared.isRefreshingAll)
             const Padding(padding: EdgeInsets.only(right: 8), child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2))),
+          if (LockManager.shared.hasLock) ...[_circle(Icons.lock_rounded, LockManager.shared.lockNow), const SizedBox(width: 6)],
+          _circle(Icons.shuffle_rounded, _shuffle),
+          const SizedBox(width: 6),
           _circle(Icons.history_rounded, () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const HistoryView()))),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           _circle(Icons.add_rounded, () => _add(context)),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           _circle(Icons.settings_rounded, () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsView()))),
         ]),
       );
@@ -178,8 +196,8 @@ class _HomeViewState extends State<HomeView> {
   Widget _circle(IconData icon, VoidCallback onTap) => Pressable(
         onTap: onTap,
         child: Container(
-          width: 42,
-          height: 42,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.06), border: Border.all(color: T.line2)),
           child: Icon(icon, size: 20, color: T.ink),
         ),
