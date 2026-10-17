@@ -170,6 +170,11 @@ struct CategoryView: View {
             ToolbarItem(placement: .principal) {
                 Text(category.name).font(Theme.display(16, .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
             }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { DownloadManager.shared.downloadAll(items) } label: { Image(systemName: "arrow.down.to.line") }
+                    .disabled(items.isEmpty)
+                    .accessibilityLabel("Download all")
+            }
         }
         .task {
             guard !didLoad else { return }

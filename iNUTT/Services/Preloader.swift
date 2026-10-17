@@ -29,6 +29,9 @@ final class Preloader {
         return p
     }
 
+    /// The player already made for an item, if any.
+    func existing(_ id: String) -> AVPlayer? { players[id] }
+
     /// Releases a player when its page is gone and it is not a neighbour any more.
     func release(_ id: String) {
         players[id]?.pause()

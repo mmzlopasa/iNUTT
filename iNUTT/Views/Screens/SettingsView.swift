@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
@@ -10,6 +11,9 @@ struct SettingsView: View {
     @State private var cacheSize: Int64 = 0
     @State private var confirmClearCache = false
     @State private var confirmRemovePIN = false
+    @State private var backupFile: URL?
+    @State private var importing = false
+    @State private var importNote: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -37,13 +41,22 @@ struct SettingsView: View {
                     if lock.hasPIN && settings.pinEnabled {
                         NavigationLink { PinSetupView() } label: { row("lock.rotation", "Change PIN") }
                         Button(role: .destructive) { confirmRemovePIN = true } label: { row("lock.open", "Turn off PIN", tint: Theme.err) }
+                        NavigationLink { PinSetupView(decoy: true) } label: {
+                            row("theatermasks.fill", lock.hasDecoyPIN ? "Change decoy PIN" : "Set up decoy PIN")
+                        }
+                        if lock.hasDecoyPIN {
+                            Button(role: .destructive) { lock.setDecoyPIN(nil); lock.objectWillChange.send() } label: {
+                                row("theatermasks", "Turn off decoy PIN", tint: Theme.err)
+                            }
+                        }
                     } else {
                         NavigationLink { PinSetupView() } label: { row("lock.fill", "Set up PIN lock") }
                     }
                     Toggle(isOn: $settings.lockOnBackground) { row("moon.zzz.fill", "Lock when leaving") }
                     Toggle(isOn: $settings.hideInSwitcher) { row("eye.slash.fill", "Hide content in app switcher") }
+                    Toggle(isOn: $settings.shakeToLock) { row("iphone.radiowaves.left.and.right", "Shake to lock") }
                 } header: { sectionTitle("Security") } footer: {
-                    Text("When enabled, iNUTT asks for \(LockManager.biometryName) or your PIN every time it opens.")
+                    Text("When enabled, iNUTT asks for \(LockManager.biometryName) or your PIN every time it opens. The decoy PIN opens an empty iNUTT instead of yours. Shake to lock needs a PIN or \(LockManager.biometryName).")
                         .font(Theme.text(12)).foregroundStyle(Theme.muted)
                 }
                 .listRowBackground(rowBG)
@@ -70,30 +83,40 @@ struct SettingsView: View {
                     Toggle(isOn: $settings.startMuted) { row("speaker.slash", "Start muted") }
                     Toggle(isOn: $settings.reelsAutoNext) { row("arrow.down.to.line.compact", "Reels: next video when one ends") }
                     Toggle(isOn: $settings.hideSeen) { row("eye.slash", "Hide watched on Home") }
+                    Picker(selection: $settings.slideshowSeconds) {
+                        ForEach([3, 5, 8, 12, 20], id: \.self) { Text("\($0) s").tag($0) }
+                    } label: { row("play.square.stack", "Slideshow speed") }
+                    Toggle(isOn: $settings.slideshowRandom) { row("shuffle", "Slideshow in random order") }
+                    NavigationLink { BlockedWordsView() } label: {
+                        row("nosign", "Blocked words", value: settings.blockedWords.isEmpty ? "None" : "\(settings.blockedWords.count)")
+                    }
                 } header: { sectionTitle("Playback") }
                 .listRowBackground(rowBG)
 
                 Section {
+                    Toggle(isOn: $settings.vaultDownloads) { row("lock.shield.fill", "Download into the vault") }
                     Toggle(isOn: $settings.saveToPhotos) { row("photo.on.rectangle", "Save to Photos") }
+                        .disabled(settings.vaultDownloads)
                     Toggle(isOn: $settings.backgroundRefresh) { row("arrow.triangle.2.circlepath", "Background refresh") }
                     Button { confirmClearCache = true } label: {
                         row("internaldrive", "Clear cache", value: ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
                     }
                 } header: { sectionTitle("Downloads & storage") } footer: {
-                    Text("Downloads are also saved in the Files app › iNUTT.")
+                    Text(settings.vaultDownloads ? "Downloads are encrypted in the vault (Favorites › shield)." : "Downloads are also saved in the Files app › iNUTT.")
                         .font(Theme.text(12)).foregroundStyle(Theme.muted)
                 }
                 .listRowBackground(rowBG)
 
                 Section {
-                    ShareLink(item: sites.sites.map(\.url.absoluteString).joined(separator: "\n"),
-                              subject: Text("iNUTT sites"),
-                              message: Text("My iNUTT sites")) {
-                        row("square.and.arrow.up", "Export sites", value: "\(sites.sites.count)")
+                    Button {
+                        backupFile = try? Backup.export()
+                    } label: { row("square.and.arrow.up", "Export backup") }
+                    Button { importing = true } label: { row("square.and.arrow.down", "Restore from backup") }
+                    if let importNote {
+                        Text(importNote).font(Theme.text(13)).foregroundStyle(Theme.body)
                     }
-                    .disabled(sites.sites.isEmpty)
                 } header: { sectionTitle("Backup") } footer: {
-                    Text("Exports your site links as text. To restore them, paste the list into Add links › Multiple links.")
+                    Text("One file with your sites, forums, favorites, collections and blocked words. It works on iPhone, Android and Windows. Restoring adds to what you have and removes nothing.")
                         .font(Theme.text(12)).foregroundStyle(Theme.muted)
                 }
                 .listRowBackground(rowBG)
@@ -130,6 +153,19 @@ struct SettingsView: View {
             }
         }
         .sheet(isPresented: $showAdd) { AddSiteView() }
+        .sheet(item: Binding(get: { backupFile.map(ShareFile.init) }, set: { if $0 == nil { backupFile = nil } })) { f in
+            ShareSheet(items: [f.url])
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json, .data, .text]) { result in
+            guard case .success(let url) = result else { return }
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url), let s = try? Backup.restore(data) else {
+                importNote = "That file isn't an iNUTT backup."
+                return
+            }
+            importNote = "Added \(s.sites) sites, \(s.forums) forums, \(s.favorites) favorites and \(s.collections) collections."
+        }
     }
 
     private var rowBG: some View { Theme.navy.opacity(0.6) }
@@ -481,5 +517,61 @@ struct EditSiteView: View {
                 dismiss()
             }
         }
+    }
+}
+
+struct ShareFile: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
+/// Words that hide items everywhere in the app.
+struct BlockedWordsView: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var word = ""
+
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    TextField("Add a word", text: $word)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onSubmit(add)
+                    Button("Add", action: add).disabled(word.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } footer: {
+                Text("Anything with one of these words in its title, category or link is hidden on Home, in Sites, Reels and Search.")
+                    .font(Theme.text(12)).foregroundStyle(Theme.muted)
+            }
+            .listRowBackground(Theme.navy.opacity(0.6))
+            Section {
+                ForEach(settings.blockedWords, id: \.self) { w in
+                    Text(w).font(Theme.text(15)).foregroundStyle(Theme.ink)
+                }
+                .onDelete { settings.blockedWords.remove(atOffsets: $0) }
+            }
+            .listRowBackground(Theme.navy.opacity(0.6))
+        }
+        .scrollContentBackground(.hidden)
+        .background(NightSky())
+        .navigationTitle("Blocked words")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func add() {
+        let parts = word.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
+        var list = settings.blockedWords
+        for p in parts where !list.contains(p) { list.append(p) }
+        settings.blockedWords = list
+        word = ""
     }
 }

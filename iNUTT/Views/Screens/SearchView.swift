@@ -101,7 +101,7 @@ struct SearchView: View {
         Task {
             let r = await engine.remoteSearch(q)
             if q == lastRemoteQuery {
-                remoteResults = r
+                remoteResults = Blocklist.filter(r)
                 searching = false
             }
         }

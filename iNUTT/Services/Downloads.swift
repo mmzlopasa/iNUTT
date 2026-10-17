@@ -50,16 +50,79 @@ final class DownloadManager: NSObject, ObservableObject {
 
     func download(_ item: MediaItem) async {
         guard progress[item.id] == nil else { return }
+        if await perform(item, batch: nil) {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } else {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
+    }
+
+    // MARK: Download all
+
+    /// Items still waiting to be downloaded; kept on disk so an interrupted batch carries on next time.
+    @Published private(set) var queue: [MediaItem] = []
+    private var queueTotal = 0
+    private var queueDone = 0
+    private var queueFailed = 0
+    private var runningQueue = false
+
+    func downloadAll(_ items: [MediaItem]) {
+        let have = Set(queue.map(\.id))
+        let add = items.filter { $0.isListing != true && !have.contains($0.id) }
+        guard !add.isEmpty else { return }
+        queue += add
+        queueTotal += add.count
+        Disk.save(queue, "downloadQueue.json")
+        show("Downloading \(queueTotal) items", symbol: "arrow.down.circle.fill")
+        Task { await runQueue() }
+    }
+
+    /// Picks up a batch that was interrupted when the app closed.
+    func resumeQueue() {
+        guard queue.isEmpty, let saved = Disk.load([MediaItem].self, "downloadQueue.json"), !saved.isEmpty else { return }
+        queue = saved
+        queueTotal = saved.count
+        Task { await runQueue() }
+    }
+
+    func cancelQueue() {
+        queue = []
+        Disk.save(queue, "downloadQueue.json")
+    }
+
+    private func runQueue() async {
+        guard !runningQueue else { return }
+        runningQueue = true
+        defer { runningQueue = false }
+        while let item = queue.first {
+            queueDone += 1
+            if !(await perform(item, batch: (queueDone, queueTotal))) { queueFailed += 1 }
+            if !queue.isEmpty { queue.removeFirst() }
+            Disk.save(queue, "downloadQueue.json")
+        }
+        guard queueTotal > 0 else { return }
+        let ok = queueDone - queueFailed
+        show(queueFailed == 0 ? "Downloaded \(ok) items" : "Downloaded \(ok) of \(queueDone) items",
+             symbol: queueFailed == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        queueTotal = 0
+        queueDone = 0
+        queueFailed = 0
+    }
+
+    /// Downloads one item into Photos, Files or the vault. Returns false when it failed.
+    private func perform(_ item: MediaItem, batch: (Int, Int)?) async -> Bool {
+        let label = batch.map { "Downloading \($0.0) of \($0.1)…" } ?? "Downloading…"
         guard let media = await FeedEngine.shared.resolve(item) else {
-            show("Content not found", symbol: "exclamationmark.triangle.fill", isError: true)
-            return
+            if batch == nil { show("Content not found", symbol: "exclamationmark.triangle.fill", isError: true) }
+            return false
         }
         if media.url.absoluteString.contains(".m3u8") {
-            show("This video is a stream and can't be downloaded", symbol: "exclamationmark.triangle.fill", isError: true)
-            return
+            if batch == nil { show("This video is a stream and can't be downloaded", symbol: "exclamationmark.triangle.fill", isError: true) }
+            return false
         }
         progress[item.id] = 0
-        show("Downloading…", symbol: "arrow.down.circle.fill", progress: 0, autoHide: false)
+        show(label, symbol: "arrow.down.circle.fill", progress: 0, autoHide: false)
         defer { progress[item.id] = nil }
 
         do {
@@ -69,10 +132,18 @@ final class DownloadManager: NSObject, ObservableObject {
             let (tmp, response) = try await delegate.download(req, in: session) { p in
                 Task { @MainActor in
                     self.progress[id] = p
-                    self.show("Downloading…", symbol: "arrow.down.circle.fill", progress: p, autoHide: false)
+                    self.show(label, symbol: "arrow.down.circle.fill", progress: p, autoHide: false)
                 }
             }
             let ext = Self.fileExtension(for: media, response: response)
+            let kind: MediaKind = media.kind == .video ? .video : (ext == "gif" ? .gif : .image)
+
+            if AppSettings.shared.vaultDownloads {
+                try await Vault.shared.add(file: tmp, item: item, kind: kind, ext: ext)
+                if batch == nil { show("Saved to the vault", symbol: "lock.shield.fill") }
+                return true
+            }
+
             let base = item.title.isEmpty ? "iNUTT-\(item.id)" : String(item.title.prefix(60))
             let safe = base.components(separatedBy: CharacterSet(charactersIn: "/\\:?%*|\"<>")).joined(separator: "-")
             var dest = Self.downloadsFolder.appendingPathComponent(safe).appendingPathExtension(ext)
@@ -82,15 +153,15 @@ final class DownloadManager: NSObject, ObservableObject {
             try FileManager.default.moveItem(at: tmp, to: dest)
 
             if AppSettings.shared.saveToPhotos {
-                try await Self.saveToPhotos(dest, kind: media.kind == .video ? .video : (ext == "gif" ? .gif : .image))
-                show("Saved to Photos", symbol: "checkmark.circle.fill")
-            } else {
+                try await Self.saveToPhotos(dest, kind: kind)
+                if batch == nil { show("Saved to Photos", symbol: "checkmark.circle.fill") }
+            } else if batch == nil {
                 show("Saved to Files › iNUTT", symbol: "checkmark.circle.fill")
             }
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            return true
         } catch {
-            show("Download failed", symbol: "xmark.octagon.fill", isError: true)
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            if batch == nil { show("Download failed", symbol: "xmark.octagon.fill", isError: true) }
+            return false
         }
     }
 

@@ -11,6 +11,17 @@ struct MediaViewer: View {
     @EnvironmentObject private var downloads: DownloadManager
     @Environment(\.dismiss) private var dismiss
     @State private var browser: BrowserTarget?
+    @ObservedObject private var collections = CollectionStore.shared
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var pickCollection = false
+    @State private var newCollection = false
+    @State private var newName = ""
+    @State private var slideshow = false
+    @State private var slideTask: Task<Void, Never>?
+    @State private var rate: Float = 1
+    @State private var loopA: Double?
+    @State private var loopB: Double?
+    @State private var loopTask: Task<Void, Never>?
 
     init(items: [MediaItem], startIndex: Int) {
         self.items = items
@@ -63,8 +74,36 @@ struct MediaViewer: View {
             library.record(current)
             Preloader.shared.preload(around: index, in: items)
         }
+        .onDisappear {
+            slideTask?.cancel()
+            loopTask?.cancel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { n in
+            guard slideshow, let p = Preloader.shared.existing(current.id), (n.object as? AVPlayerItem) === p.currentItem else { return }
+            advance()
+        }
+        .confirmationDialog("Add to collection", isPresented: $pickCollection, titleVisibility: .visible) {
+            ForEach(collections.collections) { c in
+                Button((collections.contains(current, in: c.id) ? "✓ " : "") + c.name) {
+                    let added = collections.toggle(current, in: c.id)
+                    downloads.show(added ? "Added to \(c.name)" : "Removed from \(c.name)", symbol: "folder.fill")
+                }
+            }
+            Button("New collection…") { newName = ""; newCollection = true }
+        }
+        .alert("New collection", isPresented: $newCollection) {
+            TextField("Name", text: $newName)
+            Button("Create") {
+                if let c = collections.create(newName, with: current) {
+                    downloads.show("Added to \(c.name)", symbol: "folder.fill")
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .onChange(of: index) { i in
             zoomed = false
+            clearLoop()
+            rate = 1
             library.record(current)
             Preloader.shared.preload(around: i, in: items)
             UISelectionFeedbackGenerator().selectionChanged()
@@ -105,6 +144,15 @@ struct MediaViewer: View {
                 }
             }
             Spacer()
+            Button { toggleSlideshow() } label: {
+                Image(systemName: slideshow ? "pause.fill" : "play.square.stack.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(slideshow ? Theme.onGold : Theme.ink)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(slideshow ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(.ultraThinMaterial)))
+                    .overlay(Circle().strokeBorder(Theme.edge, lineWidth: 0.8))
+            }
+            .accessibilityLabel("Slideshow")
             Text("\(index + 1) / \(items.count)")
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.body)
@@ -129,9 +177,13 @@ struct MediaViewer: View {
                     .foregroundStyle(.white)
                     .lineLimit(3)
             }
+            if isVideo { videoControls }
             HStack(spacing: 12) {
                 KindBadge(item: current)
                 Spacer()
+                actionButton("folder.badge.plus", active: collections.collections.contains { $0.items.contains { $0.id == current.id } }) {
+                    pickCollection = true
+                }
                 actionButton(library.isFavorite(current) ? "heart.fill" : "heart", active: library.isFavorite(current)) {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     library.toggleFavorite(current)
@@ -171,6 +223,121 @@ struct MediaViewer: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
         )
+    }
+
+    private var isVideo: Bool {
+        current.kind == .video || FeedEngine.shared.cachedResolution(current)?.kind == .video
+    }
+
+    private var player: AVPlayer? { Preloader.shared.existing(current.id) }
+
+    /// Skip, speed, A–B loop and AirPlay for the video on screen.
+    private var videoControls: some View {
+        HStack(spacing: 10) {
+            pill { seek(-10) } label: { Image(systemName: "gobackward.10") }
+            pill { seek(10) } label: { Image(systemName: "goforward.10") }
+            pill { cycleRate() } label: { Text(rateLabel) }
+            pill(active: loopA != nil) { tapLoop() } label: {
+                Text(loopB != nil ? "A–B ✕" : (loopA != nil ? "Set B" : "A–B"))
+            }
+            Spacer()
+            AirPlayButton().frame(width: 40, height: 40)
+        }
+        .font(.system(size: 15, weight: .semibold))
+    }
+
+    private func pill<L: View>(active: Bool = false, action: @escaping () -> Void, @ViewBuilder label: () -> L) -> some View {
+        Button(action: action) {
+            label()
+                .font(Theme.mono(13))
+                .foregroundStyle(active ? Theme.onGold : Theme.ink)
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(Capsule().fill(active ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(.ultraThinMaterial)))
+                .overlay(Capsule().strokeBorder(Theme.edge, lineWidth: 0.8))
+        }
+    }
+
+    private var rateLabel: String {
+        rate == Float(Int(rate)) ? "\(Int(rate))×" : String(format: "%g×", rate)
+    }
+
+    private func seek(_ by: Double) {
+        guard let p = player else { return }
+        let t = max(0, p.currentTime().seconds + by)
+        p.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func cycleRate() {
+        let steps: [Float] = [1, 1.25, 1.5, 2, 0.5, 0.75]
+        rate = steps[((steps.firstIndex(of: rate) ?? 0) + 1) % steps.count]
+        player?.defaultRate = rate
+        if player?.rate ?? 0 > 0 { player?.rate = rate }
+    }
+
+    /// First tap marks A, second marks B and loops between them, third clears.
+    private func tapLoop() {
+        guard let p = player else { return }
+        let now = p.currentTime().seconds
+        if loopB != nil || (loopA != nil && now <= (loopA ?? 0) + 0.3) {
+            clearLoop()
+        } else if let a = loopA {
+            loopB = now
+            p.seek(to: CMTime(seconds: a, preferredTimescale: 600))
+            loopTask?.cancel()
+            loopTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    guard let a = loopA, let b = loopB, let p = player else { continue }
+                    if p.currentTime().seconds >= b { p.seek(to: CMTime(seconds: a, preferredTimescale: 600)) }
+                }
+            }
+        } else {
+            loopA = now
+        }
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func clearLoop() {
+        loopTask?.cancel()
+        loopTask = nil
+        loopA = nil
+        loopB = nil
+    }
+
+    // MARK: Slideshow
+
+    private func toggleSlideshow() {
+        slideshow.toggle()
+        slideTask?.cancel()
+        guard slideshow else { return }
+        chrome = false
+        slideTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(max(2, settings.slideshowSeconds)) * 1_000_000_000)
+                guard !Task.isCancelled, slideshow else { return }
+                // A playing video moves on when it ends (or after three minutes at most).
+                if isVideo, let p = player, p.currentItem != nil {
+                    var waited = 0
+                    while !Task.isCancelled, slideshow, waited < 360, Preloader.shared.existing(current.id) === p {
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        waited += 1
+                    }
+                    if Preloader.shared.existing(current.id) !== p { continue }
+                }
+                advance()
+            }
+        }
+    }
+
+    private func advance() {
+        guard items.count > 1 else { return }
+        var next = index + 1
+        if settings.slideshowRandom {
+            repeat { next = Int.random(in: 0..<items.count) } while next == index
+        }
+        withAnimation(.easeInOut(duration: 0.35)) { index = next % items.count }
     }
 
     private func actionButton(_ symbol: String, active: Bool, action: @escaping () -> Void) -> some View {
@@ -436,4 +603,16 @@ struct ZoomableImage: UIViewRepresentable {
             }
         }
     }
+}
+
+struct AirPlayButton: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let v = AVRoutePickerView()
+        v.prioritizesVideoDevices = true
+        v.tintColor = .white
+        v.activeTintColor = UIColor(Theme.gold)
+        v.backgroundColor = .clear
+        return v
+    }
+    func updateUIView(_ v: AVRoutePickerView, context: Context) {}
 }

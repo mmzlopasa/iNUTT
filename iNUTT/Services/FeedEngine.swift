@@ -65,7 +65,13 @@ final class FeedEngine: ObservableObject {
         return site.id.uuidString
     }
 
-    func items(_ site: Site, _ category: SiteCategory? = nil) -> [MediaItem] { feeds[Self.key(site, category)] ?? [] }
+    func items(_ site: Site, _ category: SiteCategory? = nil) -> [MediaItem] { Blocklist.filter(feeds[Self.key(site, category)] ?? []) }
+
+    /// Blocked words changed: lists are worked out again.
+    func filtersChanged() {
+        version &+= 1
+        changed()
+    }
     func hasMore(_ site: Site, _ category: SiteCategory? = nil) -> Bool { nextPages[Self.key(site, category)] != nil }
 
     /// All cached items across enabled sites, interleaved so no site dominates.
@@ -73,7 +79,7 @@ final class FeedEngine: ObservableObject {
     /// When the site's own page only lists categories, its newest items come from those categories.
     func homeItems(_ site: Site) -> [MediaItem] {
         if let c = homeCache[site.id], c.version == version { return c.items }
-        let items = computeHomeItems(site)
+        let items = Blocklist.filter(computeHomeItems(site))
         homeCache[site.id] = (version, items)
         return items
     }
@@ -126,7 +132,7 @@ final class FeedEngine: ObservableObject {
 
     func allCachedItems() -> [MediaItem] {
         var seen = Set<String>()
-        return feeds.values.flatMap { $0 }.filter { seen.insert($0.id).inserted }
+        return Blocklist.filter(feeds.values.flatMap { $0 }.filter { seen.insert($0.id).inserted })
     }
 
     // MARK: Refresh

@@ -157,7 +157,7 @@ final class ReelsStore: ObservableObject {
         return await PageRenderer.shared.captureVideos(site.url, rounds: rounds) { [weak self] batch in
             Task { @MainActor in
                 guard let self, let s = self.streamSource, s == AppSettings.shared.reelsSource else { return }
-                let fresh = batch.map(item)
+                let fresh = Blocklist.filter(batch.map(item))
                 self.streamed += fresh
                 // The first video of a fresh load replaces what was shown before.
                 if self.streamFresh { self.items = []; self.streamFresh = false }
@@ -171,7 +171,7 @@ final class ReelsStore: ObservableObject {
     /// Videos, GIFs, and post links that may hold one, from any site. Post links are treated as
     /// videos so resolving them renders the page until its video shows up. Plain pictures are left out.
     static func reels(_ items: [MediaItem]) -> [MediaItem] {
-        items.compactMap { i in
+        Blocklist.filter(items).compactMap { i in
             if i.isListing == true { return nil }
             if i.kind == .video || i.kind == .gif { return i }
             guard i.mediaURL == nil, i.pageURL != nil else { return nil }

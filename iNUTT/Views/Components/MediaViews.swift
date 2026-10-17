@@ -150,6 +150,7 @@ struct MediaCard: View {
 struct MediaContextMenu: View {
     let item: MediaItem
     @EnvironmentObject private var library: Library
+    @ObservedObject private var collections = CollectionStore.shared
 
     var body: some View {
         Button {
@@ -162,6 +163,19 @@ struct MediaContextMenu: View {
             Task { await DownloadManager.shared.download(item) }
         } label: {
             Label("Download", systemImage: "arrow.down.circle")
+        }
+        if !collections.collections.isEmpty {
+            Menu {
+                ForEach(collections.collections) { c in
+                    Button {
+                        collections.toggle(item, in: c.id)
+                    } label: {
+                        if collections.contains(item, in: c.id) { Label(c.name, systemImage: "checkmark") } else { Text(c.name) }
+                    }
+                }
+            } label: {
+                Label("Add to collection", systemImage: "folder.badge.plus")
+            }
         }
     }
 }

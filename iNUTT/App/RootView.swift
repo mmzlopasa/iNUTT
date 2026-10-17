@@ -71,6 +71,13 @@ struct RootView: View {
         }
         .onAppear { updateLock() }
         .onChange(of: lock.isLocked) { _ in updateLock() }
+        .onChange(of: lock.decoy) { _ in updateLock() }
+        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
+            guard settings.shakeToLock else { return }
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            viewer.presentation = nil
+            lock.lockNow()
+        }
         .onChange(of: phase) { p in
             // Inside onChange the view still holds the old phase, so pass the new one.
             updateLock(phase: p)
@@ -81,6 +88,7 @@ struct RootView: View {
             guard !didStart else { return }
             didStart = true
             engine.scheduleBackgroundRefresh()
+            downloads.resumeQueue()
             if engine.isStale { await engine.refreshAll() }
         }
     }
@@ -89,7 +97,7 @@ struct RootView: View {
 extension RootView {
     func updateLock(phase: ScenePhase? = nil) {
         let current = phase ?? self.phase
-        LockWindow.shared.update(locked: lock.isLocked, covered: settings.hideInSwitcher && current != .active)
+        LockWindow.shared.update(locked: lock.isLocked, covered: settings.hideInSwitcher && current != .active, decoy: lock.decoy)
     }
 }
 

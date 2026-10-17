@@ -158,6 +158,15 @@ final class Library: ObservableObject {
         Disk.save(history, "history.json")
     }
 
+    /// Used by backup restore.
+    func mergeFavorites(_ items: [MediaItem]) {
+        let fresh = items.filter { !favoriteIDs.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        favorites += fresh
+        favoriteIDs.formUnion(fresh.map(\.id))
+        Disk.save(favorites, "favorites.json")
+    }
+
     /// Keeps stored copies in sync when an item's kind is discovered on open.
     func refreshItem(_ item: MediaItem) {
         if let i = favorites.firstIndex(where: { $0.id == item.id }), favorites[i].kind != item.kind {
@@ -165,6 +174,106 @@ final class Library: ObservableObject {
             Disk.save(favorites, "favorites.json")
         }
     }
+}
+
+// MARK: - Blocked words
+
+/// Hides items whose title, category or link contains a blocked word. Read from any thread.
+enum Blocklist {
+    private static let lock = NSLock()
+    private static var words: [String] = []
+
+    static func update(_ list: [String]) {
+        let w = list.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }
+        lock.withLock { words = w }
+    }
+
+    static var isEmpty: Bool { lock.withLock { words.isEmpty } }
+
+    static func blocks(_ item: MediaItem) -> Bool {
+        let w = lock.withLock { words }
+        guard !w.isEmpty else { return false }
+        let hay = [item.title, item.categoryName ?? "", item.pageURL?.path ?? "", item.mediaURL?.path ?? ""]
+            .joined(separator: " ").lowercased()
+        return w.contains { hay.contains($0) }
+    }
+
+    static func filter(_ items: [MediaItem]) -> [MediaItem] {
+        isEmpty ? items : items.filter { !blocks($0) }
+    }
+}
+
+// MARK: - Collections
+
+struct MediaCollection: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var name: String
+    var items: [MediaItem] = []
+    var createdAt = Date()
+}
+
+/// Your own folders of saved items, next to Favorites.
+@MainActor
+final class CollectionStore: ObservableObject {
+    static let shared = CollectionStore()
+    @Published private(set) var collections: [MediaCollection] = []
+
+    private init() { collections = Disk.load([MediaCollection].self, "collections.json") ?? [] }
+
+    @discardableResult
+    func create(_ name: String, with item: MediaItem? = nil) -> MediaCollection? {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return nil }
+        var c = MediaCollection(name: n)
+        if let item { c.items = [item] }
+        collections.append(c)
+        save()
+        return c
+    }
+
+    func contains(_ item: MediaItem, in id: UUID) -> Bool {
+        collections.first { $0.id == id }?.items.contains { $0.id == item.id } ?? false
+    }
+
+    /// Adds the item, or takes it out when it is already there. Returns true when it was added.
+    @discardableResult
+    func toggle(_ item: MediaItem, in id: UUID) -> Bool {
+        guard let i = collections.firstIndex(where: { $0.id == id }) else { return false }
+        defer { save() }
+        if let j = collections[i].items.firstIndex(where: { $0.id == item.id }) {
+            collections[i].items.remove(at: j)
+            return false
+        }
+        collections[i].items.insert(item, at: 0)
+        return true
+    }
+
+    func rename(_ id: UUID, to name: String) {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty, let i = collections.firstIndex(where: { $0.id == id }) else { return }
+        collections[i].name = n
+        save()
+    }
+
+    func delete(_ id: UUID) {
+        collections.removeAll { $0.id == id }
+        save()
+    }
+
+    /// Used by backup restore.
+    func merge(_ incoming: [MediaCollection]) {
+        for c in incoming {
+            if let i = collections.firstIndex(where: { $0.name.caseInsensitiveCompare(c.name) == .orderedSame }) {
+                let have = Set(collections[i].items.map(\.id))
+                collections[i].items += c.items.filter { !have.contains($0.id) }
+            } else {
+                collections.append(c)
+            }
+        }
+        save()
+    }
+
+    private func save() { Disk.save(collections, "collections.json") }
 }
 
 // MARK: - Settings
@@ -192,11 +301,25 @@ final class AppSettings: ObservableObject {
     @Published var reelsAutoNext: Bool { didSet { d.set(reelsAutoNext, forKey: "reelsAutoNext") } }
     /// Home leaves out what you have already opened.
     @Published var hideSeen: Bool { didSet { d.set(hideSeen, forKey: "hideSeen") } }
+    /// Words that hide an item everywhere (title, category or link).
+    @Published var blockedWords: [String] {
+        didSet {
+            d.set(blockedWords, forKey: "blockedWords")
+            Blocklist.update(blockedWords)
+            FeedEngine.shared.filtersChanged()
+        }
+    }
+    @Published var slideshowSeconds: Int { didSet { d.set(slideshowSeconds, forKey: "slideshowSeconds") } }
+    @Published var slideshowRandom: Bool { didSet { d.set(slideshowRandom, forKey: "slideshowRandom") } }
+    /// Downloads go into the encrypted vault inside the app instead of Photos and Files.
+    @Published var vaultDownloads: Bool { didSet { d.set(vaultDownloads, forKey: "vaultDownloads") } }
+    @Published var shakeToLock: Bool { didSet { d.set(shakeToLock, forKey: "shakeToLock") } }
 
     private init() {
         d.register(defaults: [
             "lockOnBackground": true, "historyEnabled": true, "autoplay": true, "loopVideos": true,
-            "maxQuality": 2160, "saveToPhotos": true, "backgroundRefresh": true, "hideInSwitcher": true
+            "maxQuality": 2160, "saveToPhotos": true, "backgroundRefresh": true, "hideInSwitcher": true,
+            "slideshowSeconds": 5
         ])
         faceIDEnabled = d.bool(forKey: "faceID")
         pinEnabled = d.bool(forKey: "pinEnabled")
@@ -213,6 +336,12 @@ final class AppSettings: ObservableObject {
         reelsSource = d.string(forKey: "reelsSource") ?? ""
         reelsAutoNext = d.bool(forKey: "reelsAutoNext")
         hideSeen = d.bool(forKey: "hideSeen")
+        blockedWords = d.stringArray(forKey: "blockedWords") ?? []
+        slideshowSeconds = d.integer(forKey: "slideshowSeconds")
+        slideshowRandom = d.bool(forKey: "slideshowRandom")
+        vaultDownloads = d.bool(forKey: "vaultDownloads")
+        shakeToLock = d.bool(forKey: "shakeToLock")
+        Blocklist.update(blockedWords)
     }
 
     func addRecentSearch(_ q: String) {

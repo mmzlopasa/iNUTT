@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import LocalAuthentication
 import Security
 import CryptoKit
@@ -36,6 +37,8 @@ final class LockManager: ObservableObject {
 
     @Published private(set) var isLocked: Bool
     @Published var isAuthenticating = false
+    /// Unlocked with the decoy PIN: an empty app is shown instead of the real one until the next lock.
+    @Published private(set) var decoy = false
 
     private init() {
         let s = AppSettings.shared
@@ -64,13 +67,26 @@ final class LockManager: ObservableObject {
     }
 
     func lockIfNeeded() {
-        if isProtectionOn && AppSettings.shared.lockOnBackground { isLocked = true }
+        if isProtectionOn && (AppSettings.shared.lockOnBackground || decoy) { lockNow() }
+        Vault.shared.closeOpenFiles()
     }
 
     func unlock() { isLocked = false }
 
-    /// Locks right away, from the Home lock button.
-    func lockNow() { if isProtectionOn { isLocked = true } }
+    /// Locks right away, from the Home lock button or a shake.
+    func lockNow() {
+        guard isProtectionOn else { return }
+        isLocked = true
+        decoy = false
+    }
+
+    func matchesPIN(_ pin: String) -> Bool { Keychain.get("pin") == Self.hash(pin) }
+
+    var hasDecoyPIN: Bool { Keychain.get("decoyPin") != nil }
+
+    func setDecoyPIN(_ pin: String?) {
+        Keychain.set(pin.map(Self.hash), for: "decoyPin")
+    }
 
     func authenticateBiometric() async {
         guard AppSettings.shared.faceIDEnabled, !isAuthenticating else { return }
@@ -80,7 +96,7 @@ final class LockManager: ObservableObject {
         isAuthenticating = true
         defer { isAuthenticating = false }
         let ok = (try? await ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Unlock iNUTT")) ?? false
-        if ok { isLocked = false }
+        if ok { isLocked = false; decoy = false }
     }
 
     /// Fallback when Face ID is on but no PIN is set: use the device passcode.
@@ -92,8 +108,13 @@ final class LockManager: ObservableObject {
 
     func verify(_ pin: String) -> Bool {
         guard let stored = Keychain.get("pin") else { return false }
+        if let d = Keychain.get("decoyPin"), d == Self.hash(pin), d != stored {
+            decoy = true
+            isLocked = false
+            return true
+        }
         let ok = stored == Self.hash(pin)
-        if ok { isLocked = false }
+        if ok { isLocked = false; decoy = false }
         return ok
     }
 
@@ -101,11 +122,23 @@ final class LockManager: ObservableObject {
 
     func setPIN(_ pin: String?) {
         Keychain.set(pin.map(Self.hash), for: "pin")
+        if pin == nil { setDecoyPIN(nil) }
         UserDefaults.standard.set(pin?.count ?? 0, forKey: "pinLength")
         AppSettings.shared.pinEnabled = pin != nil
     }
 
     static func hash(_ pin: String) -> String {
         SHA256.hash(data: Data(("inutt-salt-" + pin).utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+extension Notification.Name {
+    static let deviceDidShake = Notification.Name("inutt.deviceDidShake")
+}
+
+extension UIWindow {
+    open override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake { NotificationCenter.default.post(name: .deviceDidShake, object: nil) }
+        super.motionEnded(motion, with: event)
     }
 }

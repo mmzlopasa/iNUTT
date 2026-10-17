@@ -147,6 +147,8 @@ struct LockView: View {
 
 /// Set or change the PIN: enter twice.
 struct PinSetupView: View {
+    /// Sets the decoy PIN instead, which opens an empty app.
+    var decoy = false
     @EnvironmentObject private var lock: LockManager
     @Environment(\.dismiss) private var dismiss
     @State private var first: String?
@@ -159,7 +161,7 @@ struct PinSetupView: View {
         ZStack {
             NightSky()
             VStack(spacing: 22) {
-                Text(first == nil ? "Enter a new PIN" : "Repeat PIN")
+                Text(first == nil ? (decoy ? "Enter a decoy PIN" : "Enter a new PIN") : "Repeat PIN")
                     .font(Theme.display(22, .semibold)).foregroundStyle(Theme.ink)
                 Picker("Length", selection: $length) {
                     Text("4 digits").tag(4)
@@ -167,15 +169,16 @@ struct PinSetupView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 260)
-                .disabled(first != nil)
+                .disabled(first != nil || decoy)
                 PinDots(count: length, filled: entered.count, shake: shake)
                 if let message { Text(message).font(Theme.text(13)).foregroundStyle(Theme.err) }
                 PinPad(onDigit: type, onDelete: { if !entered.isEmpty { entered.removeLast() } })
             }
             .padding()
         }
-        .navigationTitle("PIN")
+        .navigationTitle(decoy ? "Decoy PIN" : "PIN")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { if decoy { length = lock.pinLength } }
         .onChange(of: length) { _ in entered = "" }
     }
 
@@ -185,7 +188,18 @@ struct PinSetupView: View {
         guard entered.count == length else { return }
         if let f = first {
             if f == entered {
-                lock.setPIN(entered)
+                if decoy {
+                    guard !lock.matchesPIN(entered) else {
+                        message = "Use a different PIN than your real one"
+                        withAnimation(.linear(duration: 0.4)) { shake += 1 }
+                        first = nil
+                        entered = ""
+                        return
+                    }
+                    lock.setDecoyPIN(entered)
+                } else {
+                    lock.setPIN(entered)
+                }
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 dismiss()
             } else {

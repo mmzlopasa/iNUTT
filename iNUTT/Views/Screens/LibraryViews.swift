@@ -3,11 +3,25 @@ import SwiftUI
 struct FavoritesView: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var router: Router
+    @ObservedObject private var collections = CollectionStore.shared
+    @ObservedObject private var vault = Vault.shared
     @State private var filter: MediaKind?
+    /// nil shows every favorite; otherwise one of your collections.
+    @State private var selected: UUID?
+    @State private var newCollection = false
+    @State private var renaming: MediaCollection?
+    @State private var name = ""
+    @State private var showVault = false
+    @State private var confirmDelete: MediaCollection?
+
+    private var source: [MediaItem] {
+        if let selected, let c = collections.collections.first(where: { $0.id == selected }) { return c.items }
+        return library.favorites
+    }
 
     private var items: [MediaItem] {
-        guard let filter else { return library.favorites }
-        return library.favorites.filter { $0.kind == filter }
+        guard let filter else { return source }
+        return source.filter { $0.kind == filter }
     }
 
     var body: some View {
@@ -16,16 +30,25 @@ struct FavoritesView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("FAVORITES").font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
-                            Text("\(library.favorites.count)").font(Theme.dot(34)).foregroundStyle(Theme.goldGradient)
+                            Text(selected == nil ? "FAVORITES" : "COLLECTION").font(Theme.mono(11)).foregroundStyle(Theme.muted).tracking(1.2)
+                            Text("\(source.count)").font(Theme.dot(34)).foregroundStyle(Theme.goldGradient)
                         }
                         Spacer()
+                        if !items.isEmpty {
+                            circle("arrow.down.to.line") {
+                                DownloadManager.shared.downloadAll(items)
+                            }
+                        }
+                        circle("lock.shield.fill") { showVault = true }
                     }
                     .padding(.horizontal, 16)
+                    collectionBar
                     KindFilterBar(filter: $filter)
                     if items.isEmpty {
-                        EmptyStateView(symbol: "heart", title: "No favorites yet",
-                                       message: "Tap the heart in the viewer or long-press a card.")
+                        EmptyStateView(symbol: selected == nil ? "heart" : "folder",
+                                       title: selected == nil ? "No favorites yet" : "This collection is empty",
+                                       message: selected == nil ? "Tap the heart in the viewer or long-press a card."
+                                           : "Add items with the folder button in the viewer or by long-pressing a card.")
                             .padding(.horizontal, 16)
                     } else {
                         MediaGrid(items: items).padding(.horizontal, 16)
@@ -39,7 +62,69 @@ struct FavoritesView: View {
             .navigationDestination(for: SiteRoute.self) { r in
                 SiteRouteView(route: r)
             }
+            .navigationDestination(isPresented: $showVault) { VaultView() }
         }
+        .alert("New collection", isPresented: $newCollection) {
+            TextField("Name", text: $name)
+            Button("Create") { if let c = collections.create(name) { selected = c.id } }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Rename collection", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $name)
+            Button("Save") { if let r = renaming { collections.rename(r.id, to: name) } }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Delete this collection?", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }),
+                            titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                if let c = confirmDelete {
+                    if selected == c.id { selected = nil }
+                    collections.delete(c.id)
+                }
+            }
+        } message: { Text("The items stay in Favorites and on their sites.") }
+    }
+
+    private var collectionBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip("All favorites", symbol: "heart.fill", on: selected == nil) { selected = nil }
+                ForEach(collections.collections) { c in
+                    chip("\(c.name) · \(c.items.count)", symbol: "folder.fill", on: selected == c.id) { selected = c.id }
+                        .contextMenu {
+                            Button { name = c.name; renaming = c } label: { Label("Rename", systemImage: "pencil") }
+                            Button(role: .destructive) { confirmDelete = c } label: { Label("Delete", systemImage: "trash") }
+                        }
+                }
+                chip("New", symbol: "plus", on: false) { name = ""; newCollection = true }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    private func chip(_ title: String, symbol: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(Theme.text(13, .semibold))
+                .foregroundStyle(on ? Theme.onGold : Theme.ink)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background(Capsule().fill(on ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(Color.white.opacity(0.06))))
+                .overlay(Capsule().strokeBorder(on ? Color.clear : Theme.line2, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func circle(_ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.ink)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color.white.opacity(0.07)))
+                .overlay(Circle().strokeBorder(Theme.line2, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 

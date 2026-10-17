@@ -319,6 +319,7 @@ struct WebBrowserView: View {
             Button { model.web.goForward() } label: { icon("chevron.right") }.disabled(!model.canGoForward).opacity(model.canGoForward ? 1 : 0.4)
             Spacer()
             Button { addAsSite() } label: { icon("plus.rectangle.on.rectangle") }
+            Button { Task { await downloadAll() } } label: { icon("arrow.down.to.line") }
             Button { Task { await showMedia() } } label: {
                 Label("Media", systemImage: "photo.stack.fill")
                     .font(Theme.text(14, .semibold))
@@ -342,6 +343,14 @@ struct WebBrowserView: View {
         guard !items.isEmpty else { flash("No pictures or videos on this page"); return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         viewerItems = ViewerPresentation(items: items, index: 0)
+    }
+
+    /// Every picture and video on the page, downloaded one after another.
+    private func downloadAll() async {
+        let items = await model.collectMedia(siteName: target.title)
+        guard !items.isEmpty else { flash("No pictures or videos on this page"); return }
+        DownloadManager.shared.downloadAll(items)
+        flash("Downloading \(items.count) items")
     }
 
     /// The page you are on becomes a site, so its media shows up on Home and in Sites.
