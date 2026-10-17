@@ -45,6 +45,11 @@ class ImagePipeline {
     if (mem != null) return Future.value(mem);
     return _inFlight.putIfAbsent(k, () async {
       try {
+        if (url.scheme == 'file') {
+          final b = await File.fromUri(url).readAsBytes();
+          _remember(k, b);
+          return b;
+        }
         final f = _file(k);
         if (await f.exists()) {
           final b = await f.readAsBytes();

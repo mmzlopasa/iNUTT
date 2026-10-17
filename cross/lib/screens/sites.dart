@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../core/downloads.dart';
+import '../core/extras.dart';
 import '../core/feed_engine.dart';
 import '../core/models.dart';
 import '../core/stores.dart';
@@ -126,7 +128,11 @@ class SitesView extends StatelessWidget {
                     delegate: SliverChildBuilderDelegate(
                       (context, i) => Pressable(
                         onTap: () => AppRouter.shared.openSite(store.sites[i].id),
-                        child: SiteCard(site: store.sites[i]),
+                        onLongPress: () => watchMenu(context, store.sites[i].id, store.sites[i].name, forum: false),
+                        child: GestureDetector(
+                          onSecondaryTap: () => watchMenu(context, store.sites[i].id, store.sites[i].name, forum: false),
+                          child: SiteCard(site: store.sites[i]),
+                        ),
                       ),
                       childCount: store.sites.length,
                     ),
@@ -231,4 +237,41 @@ class SiteCard extends StatelessWidget {
       Text(text, style: T.mono(11, color: T.body)),
     ],
   );
+}
+
+/// Turns new-content alerts on or off for one site or forum.
+Future<void> watchMenu(BuildContext context, String id, String name, {required bool forum}) async {
+  final s = AppSettings.shared;
+  final on = s.notifyNew && (forum ? s.watchedForums : s.watchedSites).contains(id);
+  final ok = await showModalBottomSheet<bool>(
+    context: context,
+    backgroundColor: T.navy,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 6),
+            child: Text(name, style: T.display(15, weight: FontWeight.w600)),
+          ),
+          ListTile(
+            leading: Icon(on ? Icons.notifications_off_rounded : Icons.notifications_active_rounded, color: T.gold),
+            title: Text(on ? 'Stop new-content alerts' : 'Alert me about new content', style: T.text(15, color: T.ink)),
+            onTap: () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (ok != true) return;
+  if (on) {
+    s.toggleWatch(id, forum: forum);
+    return;
+  }
+  if (!(forum ? s.watchedForums : s.watchedSites).contains(id)) s.toggleWatch(id, forum: forum);
+  s.notifyNew = true;
+  final allowed = await NewContentWatcher.requestPermission();
+  await NewContentWatcher.start();
+  await NewContentWatcher.check();
+  DownloadManager.shared.show(allowed ? "You'll be told about new content" : 'Allow notifications for iNUTT', success: allowed);
 }

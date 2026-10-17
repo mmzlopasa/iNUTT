@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../core/downloads.dart';
+import '../core/extras.dart';
 import '../core/feed_engine.dart';
 import '../core/html.dart';
 import '../core/models.dart';
@@ -15,6 +16,7 @@ import '../core/stores.dart';
 import '../ui/remote_image.dart';
 import '../ui/router.dart';
 import '../ui/theme.dart';
+import 'sites.dart';
 
 class Forum {
   final String id;
@@ -180,6 +182,14 @@ class ForumsSection extends StatelessWidget {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.notifications_rounded, color: T.gold),
+              title: Text('New-content alerts…', style: T.text(15, color: T.ink)),
+              onTap: () {
+                Navigator.pop(ctx);
+                watchMenu(context, f.id, f.name, forum: true);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.delete_rounded, color: T.gold),
               title: Text('Remove', style: T.text(15, color: T.ink)),
               onTap: () {
@@ -296,6 +306,8 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
     _noteTimer?.cancel();
     final id = widget.forumId;
     if (id != null) ForumStore.shared.remember(id, _current);
+    // Whatever you signed in to here works on Home and in Sites too.
+    unawaited(CookieJar.capture(_current ?? widget.url));
     super.dispose();
   }
 
@@ -447,6 +459,7 @@ class _WebBrowserPageState extends State<WebBrowserPage> {
                     onWebViewCreated: (c) => _web = c,
                     onTitleChanged: (c, t) => setState(() => _title = t ?? ''),
                     onProgressChanged: (c, p) => setState(() => _progress = p / 100),
+                    onLoadStop: (c, url) => CookieJar.capture(url),
                     onUpdateVisitedHistory: (c, url, _) {
                       _current = url;
                       _updateNav();

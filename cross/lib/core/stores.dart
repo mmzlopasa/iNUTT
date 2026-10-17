@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'extras.dart';
 import 'models.dart';
 
 /// JSON files in the app's support folder.
@@ -180,6 +181,7 @@ class Library extends ChangeNotifier {
     favoritesVersion.value++;
     notifyListeners();
     Disk.save('favorites.json', favorites.map((e) => e.toJson()).toList());
+    if (AppSettings.shared.offlineFavorites) OfflineStore.shared.sync();
   }
 
   /// While the viewer or Reels is open, screens underneath are not redrawn for every swipe;
@@ -189,9 +191,14 @@ class Library extends ChangeNotifier {
   Timer? _historySave;
 
   void holdUpdates() => _hold++;
+  bool get isHolding => _hold > 0;
 
   void releaseUpdates() {
     if (_hold > 0) _hold--;
+    if (_hold == 0) {
+      ResumeStore.shared.flush();
+      WatchLater.shared.flush();
+    }
     if (_hold == 0 && _dirty) {
       _dirty = false;
       favoritesVersion.value++;
@@ -200,7 +207,7 @@ class Library extends ChangeNotifier {
   }
 
   void record(MediaItem item) {
-    if (!AppSettings.shared.historyEnabled || item.isListing) return;
+    if (!AppSettings.shared.historyEnabled || AppSettings.shared.privateMode || item.isListing) return;
     history.removeWhere((e) => e.item.id == item.id);
     history.insert(0, HistoryEntry(item: item, viewedAt: DateTime.now()));
     final firstTime = _seenIds.add(item.id);
@@ -415,6 +422,47 @@ class AppSettings extends ChangeNotifier {
   bool get shakeToLock => _b('shakeToLock', false);
   set shakeToLock(bool v) => _sb('shakeToLock', v);
 
+  /// Nothing is remembered: no history, no seen marks, no resume points, no recent searches.
+  bool get privateMode => _b('privateMode', false);
+  set privateMode(bool v) => _sb('privateMode', v);
+
+  /// Favorites are downloaded on Wi-Fi so they open offline.
+  bool get offlineFavorites => _b('offlineFavorites', false);
+  set offlineFavorites(bool v) => _sb('offlineFavorites', v);
+  List<String> get offlineCollections => _p.getStringList('offlineCollections') ?? [];
+  set offlineCollections(List<String> v) {
+    _p.setStringList('offlineCollections', v);
+    notifyListeners();
+  }
+
+  bool get notifyNew => _b('notifyNew', false);
+  set notifyNew(bool v) => _sb('notifyNew', v);
+
+  /// Notifications say only that something is new, never which site.
+  bool get notifyDiscreet => _b('notifyDiscreet', true);
+  set notifyDiscreet(bool v) => _sb('notifyDiscreet', v);
+  List<String> get watchedSites => _p.getStringList('watchedSites') ?? [];
+  List<String> get watchedForums => _p.getStringList('watchedForums') ?? [];
+
+  /// Follows a site or forum for new-content alerts. Returns true when it is now followed.
+  bool toggleWatch(String id, {required bool forum}) {
+    final key = forum ? 'watchedForums' : 'watchedSites';
+    final list = [...(_p.getStringList(key) ?? <String>[])];
+    final on = !list.remove(id);
+    if (on) list.add(id);
+    _p.setStringList(key, list);
+    if (on) _p.setBool('notifyNew', true);
+    notifyListeners();
+    return on;
+  }
+
+  /// Windows: the key that hides and locks the app at once.
+  String get hideKey => _p.getString('hideKey') ?? 'F12';
+  set hideKey(String v) {
+    _p.setString('hideKey', v);
+    notifyListeners();
+  }
+
   /// The one link the Reels tab plays from.
   String get reelsSource => _p.getString('reelsSource') ?? '';
   set reelsSource(String v) {
@@ -436,7 +484,7 @@ class AppSettings extends ChangeNotifier {
 
   void addRecentSearch(String q) {
     final t = q.trim();
-    if (t.isEmpty) return;
+    if (t.isEmpty || privateMode) return;
     recentSearches = [t, ...recentSearches.where((e) => e.toLowerCase() != t.toLowerCase())].take(15).toList();
   }
 }

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
+import '../core/downloads.dart';
+import '../core/extras.dart';
 import '../core/feed_engine.dart';
 import '../core/models.dart';
 import '../core/security.dart';
@@ -132,7 +134,11 @@ class _HomeViewState extends State<HomeView> {
             child: KindFilterBar(filter: _filter, onChanged: (k) => AppRouter.shared.homeFilter.value = k),
           ),
         );
+        if (_filter == null || _filter == MediaKind.video) {
+          slivers.add(const SliverToBoxAdapter(child: ContinueWatchingRow()));
+        }
         if (_filter == null) {
+          slivers.add(const SliverToBoxAdapter(child: WatchLaterRow()));
           for (final s in enabled) {
             slivers.add(
               SliverToBoxAdapter(
@@ -234,6 +240,13 @@ class _HomeViewState extends State<HomeView> {
             child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2)),
           ),
         if (LockManager.shared.hasLock) ...[_circle(Icons.lock_rounded, LockManager.shared.lockNow), const SizedBox(width: 6)],
+        _circle(AppSettings.shared.privateMode ? Icons.visibility_off_rounded : Icons.visibility_rounded, () {
+          final on = !AppSettings.shared.privateMode;
+          AppSettings.shared.privateMode = on;
+          HapticFeedback.lightImpact();
+          DownloadManager.shared.show(on ? 'Private mode on: nothing is remembered' : 'Private mode off');
+        }, active: AppSettings.shared.privateMode),
+        const SizedBox(width: 6),
         _circle(Icons.shuffle_rounded, _shuffle),
         const SizedBox(width: 6),
         _circle(Icons.history_rounded, () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const HistoryView()))),
@@ -245,17 +258,18 @@ class _HomeViewState extends State<HomeView> {
     ),
   );
 
-  Widget _circle(IconData icon, VoidCallback onTap) => Pressable(
+  Widget _circle(IconData icon, VoidCallback onTap, {bool active = false}) => Pressable(
     onTap: onTap,
     child: Container(
       width: 38,
       height: 38,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: Colors.white.withValues(alpha: 0.06),
-        border: Border.all(color: T.line2),
+        gradient: active ? T.goldGradient : null,
+        color: active ? null : Colors.white.withValues(alpha: 0.06),
+        border: Border.all(color: active ? Colors.transparent : T.line2),
       ),
-      child: Icon(icon, size: 20, color: T.ink),
+      child: Icon(icon, size: 20, color: active ? T.onGold : T.ink),
     ),
   );
 }
@@ -475,4 +489,137 @@ class SiteRow extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Videos you stopped part way, with how far you got.
+class ContinueWatchingRow extends StatelessWidget {
+  const ContinueWatchingRow({super.key});
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: ResumeStore.shared,
+    builder: (context, _) {
+      final points = ResumeStore.shared.continueWatching.take(20).toList();
+      if (points.isEmpty) return const SizedBox.shrink();
+      final items = points.map((e) => e.item).toList();
+      return Padding(
+        padding: const EdgeInsets.only(top: 22),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SectionHeader(title: 'Continue watching', subtitle: '${points.length} unfinished'),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 173,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                itemCount: points.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, i) {
+                  final p = points[i];
+                  void actions() => showMediaActions(
+                    context,
+                    p.item,
+                    extra: [
+                      ListTile(
+                        leading: const Icon(Icons.remove_circle_outline_rounded, color: T.gold),
+                        title: Text('Remove from Continue watching', style: T.text(15, color: T.ink)),
+                        onTap: () {
+                          Navigator.pop(context);
+                          ResumeStore.shared.remove(p.item.id);
+                        },
+                      ),
+                    ],
+                  );
+                  return Pressable(
+                    onTap: () => AppRouter.shared.open(items, i),
+                    onLongPress: actions,
+                    child: GestureDetector(
+                      onSecondaryTap: actions,
+                      child: SizedBox(
+                        width: 240,
+                        height: 165,
+                        child: Stack(
+                          children: [
+                            MediaCard(item: p.item, aspect: 16 / 11),
+                            Positioned(
+                              left: 12,
+                              right: 12,
+                              bottom: 6,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(2),
+                                child: LinearProgressIndicator(
+                                  value: p.progress,
+                                  minHeight: 4,
+                                  color: T.gold,
+                                  backgroundColor: Colors.white24,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// Your Watch later queue on Home.
+class WatchLaterRow extends StatelessWidget {
+  const WatchLaterRow({super.key});
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: WatchLater.shared,
+    builder: (context, _) {
+      final all = WatchLater.shared.items;
+      if (all.isEmpty) return const SizedBox.shrink();
+      final items = all.take(20).toList();
+      return Padding(
+        padding: const EdgeInsets.only(top: 22),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SectionHeader(title: 'Watch later', subtitle: '${all.length} waiting'),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 178,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                itemCount: items.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, i) {
+                  final item = items[i];
+                  final a = item.kind == MediaKind.video ? 16 / 11 : 4 / 5;
+                  return Pressable(
+                    onTap: () => AppRouter.shared.open(all, i),
+                    onLongPress: () => showMediaActions(context, item),
+                    child: GestureDetector(
+                      onSecondaryTap: () => showMediaActions(context, item),
+                      child: SizedBox(width: 170 * a, height: 170, child: MediaCard(item: item, aspect: a)),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
 }

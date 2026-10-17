@@ -12,6 +12,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/downloads.dart';
+import '../core/extras.dart';
 import '../core/feed_engine.dart';
 import '../core/image_cache.dart';
 import '../core/models.dart';
@@ -51,6 +52,9 @@ class _MediaViewerState extends State<MediaViewer> {
   double _dragY = 0;
   final _focus = FocusNode();
 
+  /// Pictures looked at here; they leave Watch later when the viewer closes.
+  final Set<String> _looked = {};
+
   MediaItem get _current => widget.items[_index.clamp(0, widget.items.length - 1)];
 
   @override
@@ -58,7 +62,32 @@ class _MediaViewerState extends State<MediaViewer> {
     super.initState();
     Library.shared.holdUpdates();
     Library.shared.record(_current);
+    _markLooked();
     _preload(_index);
+  }
+
+  void _markLooked() {
+    if (!_isVideo && WatchLater.shared.contains(_current)) _looked.add(_current.id);
+  }
+
+  /// More like this; opens on top, so closing it brings you back here.
+  Future<void> _similar() async {
+    final item = _current;
+    final picked = await showModalBottomSheet<(List<MediaItem>, int)>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: T.navy,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SimilarSheet(item: item),
+    );
+    if (picked == null || !mounted) return;
+    await Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        pageBuilder: (_, __, ___) => MediaViewer(items: picked.$1, startIndex: picked.$2),
+        transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
+      ),
+    );
   }
 
   @override
@@ -66,6 +95,7 @@ class _MediaViewerState extends State<MediaViewer> {
     _slideTimer?.cancel();
     _ended?.cancel();
     _loopSub?.cancel();
+    WatchLater.shared.removeIds(_looked);
     Library.shared.releaseUpdates();
     _page.dispose();
     _focus.dispose();
@@ -297,6 +327,7 @@ class _MediaViewerState extends State<MediaViewer> {
                         _rate = 1;
                       });
                       Library.shared.record(_current);
+                      _markLooked();
                       _preload(i);
                       _scheduleSlide();
                     },
@@ -368,6 +399,8 @@ class _MediaViewerState extends State<MediaViewer> {
                     ],
                   ),
                 ),
+                _round(Icons.auto_awesome_motion_rounded, _similar),
+                const SizedBox(width: 8),
                 _round(_slideshow ? Icons.pause_rounded : Icons.slideshow_rounded, _toggleSlideshow, active: _slideshow),
                 const SizedBox(width: 10),
                 Text('${_index + 1} / ${widget.items.length}', style: T.mono(12, color: Colors.white70)),
@@ -403,9 +436,10 @@ class _MediaViewerState extends State<MediaViewer> {
               child: Frosted(
                 radius: 26,
                 child: ListenableBuilder(
-                  listenable: Listenable.merge([Library.shared, DownloadManager.shared, CollectionStore.shared]),
+                  listenable: Listenable.merge([Library.shared, DownloadManager.shared, CollectionStore.shared, WatchLater.shared]),
                   builder: (_, __) {
                     final fav = Library.shared.isFavorite(item);
+                    final later = WatchLater.shared.contains(item);
                     final inCollection = CollectionStore.shared.inAny(item);
                     final downloading = DownloadManager.shared.active.contains(item.id);
                     return Row(
@@ -416,6 +450,11 @@ class _MediaViewerState extends State<MediaViewer> {
                           Library.shared.toggleFavorite(item);
                         }, active: fav),
                         _action(Icons.create_new_folder_rounded, 'Collect', () => _pickCollection(item), active: inCollection),
+                        _action(later ? Icons.watch_later_rounded : Icons.watch_later_outlined, 'Later', () {
+                          HapticFeedback.lightImpact();
+                          final on = WatchLater.shared.toggle(item);
+                          DownloadManager.shared.show(on ? 'Added to Watch later' : 'Removed from Watch later');
+                        }, active: later),
                         _action(
                           downloading ? Icons.hourglass_top_rounded : Icons.download_rounded,
                           'Download',
@@ -469,7 +508,7 @@ class _MediaViewerState extends State<MediaViewer> {
   Widget _action(IconData icon, String label, VoidCallback? onTap, {bool active = false}) => Pressable(
     onTap: onTap,
     child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+      padding: EdgeInsets.symmetric(horizontal: isWide(context) ? 18 : 11, vertical: 10),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -501,6 +540,7 @@ class _MediaPageState extends State<MediaPage> {
   bool _failed = false;
   Player? _player;
   VideoController? _video;
+  Timer? _progress;
 
   @override
   void initState() {
@@ -518,12 +558,31 @@ class _MediaPageState extends State<MediaPage> {
         if (_resolved?.isListing == true) AppRouter.shared.openListing(widget.item);
       } else {
         _player?.pause();
+        _saveProgress();
       }
     }
   }
 
+  /// Remembers the position every few seconds while the video plays.
+  void _track() {
+    _progress?.cancel();
+    _progress = Timer.periodic(const Duration(seconds: 4), (_) {
+      final p = _player;
+      if (p == null || !p.state.playing) return;
+      ResumeStore.shared.update(widget.item, p.state.position, p.state.duration);
+    });
+  }
+
+  void _saveProgress() {
+    final p = _player;
+    if (p == null || p.state.position.inSeconds <= 5) return;
+    ResumeStore.shared.update(widget.item, p.state.position, p.state.duration);
+  }
+
   @override
   void dispose() {
+    _progress?.cancel();
+    _saveProgress();
     if (identical(_players[widget.item.id], _player)) _players.remove(widget.item.id);
     _player?.dispose();
     super.dispose();
@@ -545,7 +604,17 @@ class _MediaPageState extends State<MediaPage> {
       final v = VideoController(p);
       await p.setPlaylistMode(s.loopVideos ? PlaylistMode.single : PlaylistMode.none);
       if (s.startMuted) await p.setVolume(0);
-      await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer)), play: widget.isActive && s.autoplay);
+      await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer, r.url)), play: false);
+      if (!mounted) {
+        await p.dispose();
+        return;
+      }
+      // Carry on where you stopped last time.
+      final at = ResumeStore.shared.position(widget.item.id);
+      if (at != null) {
+        await p.stream.duration.firstWhere((d) => d > Duration.zero).timeout(const Duration(seconds: 8), onTimeout: () => Duration.zero);
+        await p.seek(at);
+      }
       if (!mounted) {
         await p.dispose();
         return;
@@ -561,6 +630,7 @@ class _MediaPageState extends State<MediaPage> {
         return;
       }
       _players[widget.item.id] = p;
+      _track();
       setState(() {
         _player = p;
         _video = v;
@@ -757,4 +827,69 @@ class _ZoomableImageState extends State<ZoomableImage> {
       ),
     ),
   );
+}
+
+/// More like this, from the item's own page and the same site.
+class SimilarSheet extends StatefulWidget {
+  final MediaItem item;
+  const SimilarSheet({super.key, required this.item});
+
+  @override
+  State<SimilarSheet> createState() => _SimilarSheetState();
+}
+
+class _SimilarSheetState extends State<SimilarSheet> {
+  List<MediaItem>? _items;
+
+  @override
+  void initState() {
+    super.initState();
+    FeedEngine.shared.related(widget.item).then((l) {
+      if (mounted) setState(() => _items = l);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _items;
+    final a = widget.item.kind == MediaKind.video ? 16 / 11 : 4 / 5;
+    return SizedBox(
+      height: MediaQuery.sizeOf(context).height * 0.75,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
+            child: Row(children: [Text('Similar', style: T.display(18)), const Spacer()]),
+          ),
+          Expanded(
+            child: items == null
+                ? const Center(child: CircularProgressIndicator(strokeWidth: 2.4, color: T.gold))
+                : items.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: EmptyState(
+                      icon: Icons.auto_awesome_motion_rounded,
+                      title: 'Nothing similar found',
+                      message: "This page doesn't link to related content.",
+                    ),
+                  )
+                : GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: gridColumns(context),
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: a,
+                    ),
+                    itemCount: items.length,
+                    itemBuilder: (context, i) => Pressable(
+                      onTap: () => Navigator.pop(context, (items, i)),
+                      child: MediaCard(item: items[i], aspect: a),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
 }

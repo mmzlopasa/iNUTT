@@ -7,8 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'core/downloads.dart';
+import 'core/extras.dart';
 import 'core/feed_engine.dart';
 import 'core/image_cache.dart';
 import 'core/models.dart';
@@ -40,6 +42,11 @@ Future<void> main() async {
   Library.shared.load();
   CollectionStore.shared.load();
   Vault.shared.load();
+  ResumeStore.shared.load();
+  WatchLater.shared.load();
+  CookieJar.load();
+  OfflineStore.shared.load();
+  if (Platform.isWindows) await windowManager.ensureInitialized();
   AppSettings.shared.blocklistVersion.addListener(FeedEngine.shared.filtersChanged);
   FeedEngine.shared.load();
   await LockManager.shared.load();
@@ -90,6 +97,7 @@ class _RootViewState extends State<RootView> {
     super.initState();
     if (FeedEngine.shared.isStale) unawaited(FeedEngine.shared.refreshAll());
     DownloadManager.shared.resumeQueue();
+    unawaited(NewContentWatcher.start());
   }
 
   Widget _tab(AppTab t, Widget root) => Navigator(
@@ -177,11 +185,22 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         LockManager.shared.lockNow();
       }, onError: (_) {});
     }
+    if (Platform.isWindows) HardwareKeyboard.instance.addHandler(_quickHide);
+  }
+
+  /// Windows: one key closes what is open, locks and minimizes the app.
+  bool _quickHide(KeyEvent e) {
+    if (e is! KeyDownEvent || e.logicalKey.keyLabel != AppSettings.shared.hideKey) return false;
+    AppRouter.shared.rootKey.currentState?.popUntil((r) => r.isFirst);
+    if (LockManager.shared.hasLock) LockManager.shared.lockNow();
+    unawaited(windowManager.minimize());
+    return true;
   }
 
   @override
   void dispose() {
     _shake?.cancel();
+    if (Platform.isWindows) HardwareKeyboard.instance.removeHandler(_quickHide);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -194,8 +213,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       LockManager.shared.lockIfNeeded();
       Vault.shared.closeOpenFiles();
       FeedEngine.shared.saveNow();
-    } else if (state == AppLifecycleState.resumed && FeedEngine.shared.isStale) {
-      unawaited(FeedEngine.shared.refreshAll());
+    } else if (state == AppLifecycleState.resumed) {
+      if (FeedEngine.shared.isStale) unawaited(FeedEngine.shared.refreshAll());
+      OfflineStore.shared.sync();
     }
   }
 

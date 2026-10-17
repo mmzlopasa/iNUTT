@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'package:flutter/foundation.dart';
 
 import 'image_cache.dart';
+import 'extras.dart';
 import 'models.dart';
 import 'net.dart';
 import 'scraper.dart';
@@ -445,6 +446,9 @@ class FeedEngine extends ChangeNotifier {
   /// The playable file behind an item. Answers instantly from the cache, joins a load that is already
   /// running, and otherwise loads it now ahead of any background work.
   Future<ResolvedMedia?> resolve(MediaItem item, {RenderPriority priority = RenderPriority.user}) async {
+    // Kept offline: plays from the device, no connection needed.
+    final local = OfflineStore.shared.local(item.id);
+    if (local != null) return local;
     final cached = _resolved[item.id];
     if (cached != null) return cached;
     final running = _inflight[item.id];
@@ -579,6 +583,44 @@ class FeedEngine extends ChangeNotifier {
   }
 
   // MARK: Search
+
+  /// More like this: what the item's own page links to (related videos and pictures), then items
+  /// from the same site with similar titles.
+  Future<List<MediaItem>> related(MediaItem item) async {
+    final out = <MediaItem>[];
+    final seen = <String>{item.id};
+    final own = item.pageUrl == null ? null : matchKey(item.pageUrl!);
+    void take(Iterable<MediaItem> list) {
+      for (final i in Blocklist.filter(list.toList())) {
+        if (i.isListing || (own != null && i.pageUrl != null && matchKey(i.pageUrl!) == own)) continue;
+        if (seen.add(i.id)) out.add(i);
+      }
+    }
+
+    final page = item.pageUrl;
+    if (page != null && page.scheme.startsWith('http')) {
+      final site = SiteStore.shared.site(item.siteId) ?? Site(name: item.siteName, url: page);
+      try {
+        final r = await fetchListing(page, page, site, item.categoryName, allowRender: false);
+        take(r.items.where((e) => isMedia(e) || e.pageUrl != null));
+      } catch (_) {}
+    }
+    if (out.length < 12) {
+      List<String> words(String t) => t.toLowerCase().split(RegExp(r'[^\p{L}\p{N}]+', unicode: true)).where((w) => w.isNotEmpty).toList();
+      final mine = words(item.title).where((w) => w.length >= 4).toSet();
+      final scored = <(MediaItem, int)>[];
+      for (final i in allCachedItems()) {
+        if (i.siteId != item.siteId && i.siteName != item.siteName) continue;
+        var score = words(i.title).toSet().intersection(mine).length * 2;
+        if (item.categoryName != null && item.categoryName == i.categoryName) score += 1;
+        if (i.kind == item.kind) score += 1;
+        if (score > 1) scored.add((i, score));
+      }
+      scored.sort((a, b) => b.$2.compareTo(a.$2));
+      take(scored.take(60).map((e) => e.$1));
+    }
+    return out.take(80).toList();
+  }
 
   Future<List<MediaItem>> remoteSearch(String query) async {
     final q = query.trim();

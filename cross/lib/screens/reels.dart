@@ -591,7 +591,7 @@ class _ReelPageState extends State<ReelPage> {
     }
     await p.setPlaylistMode(autoNext ? PlaylistMode.none : PlaylistMode.single);
     if (_muted) await p.setVolume(0);
-    await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer)), play: widget.active && !_paused);
+    await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer, r.url)), play: widget.active && !_paused);
     if (!mounted) {
       await p.dispose();
       return;

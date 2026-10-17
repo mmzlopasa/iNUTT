@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/downloads.dart';
+import '../core/extras.dart';
 import '../core/feed_engine.dart';
 import '../core/image_cache.dart';
+import '../core/net.dart';
 import '../core/models.dart';
 import '../core/stores.dart';
 import 'remote_image.dart';
@@ -110,11 +114,12 @@ class MediaCard extends StatelessWidget {
   );
 }
 
-/// Long-press / right-click actions for a card.
-void showMediaActions(BuildContext context, MediaItem item) {
+/// Long-press / right-click: a silent preview of the video (or the picture larger) above the actions.
+void showMediaActions(BuildContext context, MediaItem item, {List<Widget> extra = const []}) {
   HapticFeedback.mediumImpact();
   showModalBottomSheet<void>(
     context: context,
+    isScrollControlled: true,
     backgroundColor: T.navy,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
     builder: (ctx) {
@@ -127,12 +132,18 @@ void showMediaActions(BuildContext context, MediaItem item) {
           f();
         },
       );
+      final later = WatchLater.shared.contains(item);
       return SafeArea(
-        child: Column(
+        child: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 6),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: ClipRRect(borderRadius: BorderRadius.circular(18), child: MediaPreview(item: item)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
               child: Text(
                 item.displayTitle,
                 maxLines: 2,
@@ -145,7 +156,12 @@ void showMediaActions(BuildContext context, MediaItem item) {
               fav ? 'Remove from favorites' : 'Add to favorites',
               () => Library.shared.toggleFavorite(item),
             ),
+            tile(later ? Icons.watch_later_rounded : Icons.watch_later_outlined, later ? 'Remove from Watch later' : 'Watch later', () {
+              final on = WatchLater.shared.toggle(item);
+              DownloadManager.shared.show(on ? 'Added to Watch later' : 'Removed from Watch later');
+            }),
             tile(Icons.download_rounded, 'Download', () => DownloadManager.shared.download(item)),
+            ...extra,
             for (final c in CollectionStore.shared.collections)
               tile(
                 CollectionStore.shared.contains(item, c.id) ? Icons.check_circle_rounded : Icons.folder_rounded,
@@ -162,6 +178,7 @@ void showMediaActions(BuildContext context, MediaItem item) {
             }),
             const SizedBox(height: 8),
           ],
+          ),
         ),
       );
     },
@@ -291,4 +308,81 @@ class LoadingGrid extends StatelessWidget {
     ),
     delegate: SliverChildBuilderDelegate((_, __) => const Shimmer(radius: 18), childCount: gridColumns(context) * 3),
   );
+}
+
+/// Plays the video silently (from where you stopped), or shows the picture larger.
+class MediaPreview extends StatefulWidget {
+  final MediaItem item;
+  const MediaPreview({super.key, required this.item});
+
+  @override
+  State<MediaPreview> createState() => _MediaPreviewState();
+}
+
+class _MediaPreviewState extends State<MediaPreview> {
+  Player? _player;
+  VideoController? _video;
+  ResolvedMedia? _media;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final r = await FeedEngine.shared.resolve(widget.item);
+    if (!mounted || r == null || r.isListing) return;
+    if (r.kind != MediaKind.video) {
+      if (r.gallery.length <= 1) setState(() => _media = r);
+      return;
+    }
+    final p = Player();
+    final v = VideoController(p);
+    await p.setVolume(0);
+    await p.setPlaylistMode(PlaylistMode.single);
+    await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer, r.url)), play: false);
+    final at = ResumeStore.shared.position(widget.item.id);
+    if (at != null) {
+      await p.stream.duration.firstWhere((d) => d > Duration.zero).timeout(const Duration(seconds: 6), onTimeout: () => Duration.zero);
+      await p.seek(at);
+    }
+    if (!mounted) {
+      await p.dispose();
+      return;
+    }
+    await p.play();
+    setState(() {
+      _player = p;
+      _video = v;
+    });
+  }
+
+  @override
+  void dispose() {
+    _player?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final video = widget.item.kind == MediaKind.video || _video != null;
+    final h = (MediaQuery.sizeOf(context).height * (video ? 0.28 : 0.4)).clamp(160.0, 420.0);
+    return SizedBox(
+      height: h,
+      width: double.infinity,
+      child: ColoredBox(
+        color: Colors.black,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            RemoteImage(url: widget.item.thumbnailUrl, referer: widget.item.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 800),
+            if (_media != null)
+              RemoteImage(url: _media!.url, referer: _media!.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 1400),
+            if (_video != null) Video(controller: _video!, controls: NoVideoControls, fill: Colors.black),
+          ],
+        ),
+      ),
+    );
+  }
 }

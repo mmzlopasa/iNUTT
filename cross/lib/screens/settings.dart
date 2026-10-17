@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../core/backup.dart';
 import '../core/downloads.dart';
+import '../core/extras.dart';
 import '../core/feed_engine.dart';
 import '../core/image_cache.dart';
 import '../core/models.dart';
@@ -42,7 +43,7 @@ class _SettingsViewState extends State<SettingsView> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([AppSettings.shared, SiteStore.shared, Library.shared, LockManager.shared]),
+    listenable: Listenable.merge([AppSettings.shared, SiteStore.shared, Library.shared, LockManager.shared, OfflineStore.shared]),
     builder: (context, _) {
       final s = AppSettings.shared;
       final lock = LockManager.shared;
@@ -154,7 +155,16 @@ class _SettingsViewState extends State<SettingsView> {
             ),
             Section(
               title: 'History',
+              footer:
+                  'Private mode remembers nothing: no history, no watched marks, no Continue watching, no recent searches. '
+                  'Also on the eye button on Home.',
               children: [
+                SwitchRow(
+                  icon: Icons.visibility_off_rounded,
+                  title: 'Private mode',
+                  value: s.privateMode,
+                  onChanged: (v) => s.privateMode = v,
+                ),
                 Row2(
                   icon: Icons.history_rounded,
                   title: 'View and search history',
@@ -173,8 +183,80 @@ class _SettingsViewState extends State<SettingsView> {
                   tint: T.err,
                   onTap: Library.shared.history.isEmpty ? null : Library.shared.clearHistory,
                 ),
+                Row2(icon: Icons.play_disabled_rounded, title: 'Clear Continue watching', tint: T.err, onTap: ResumeStore.shared.clear),
+                Row2(icon: Icons.watch_later_outlined, title: 'Clear Watch later', tint: T.err, onTap: WatchLater.shared.clear),
               ],
             ),
+            Section(
+              title: 'Offline',
+              footer:
+                  'Favorites, and collections you mark with "Keep offline" (long-press a collection), download on '
+                  '${Platform.isWindows ? 'Wi-Fi or cable' : 'Wi-Fi only'} and then open without a connection. Streams (HLS) can\'t be kept.',
+              children: [
+                SwitchRow(
+                  icon: Icons.download_for_offline_rounded,
+                  title: 'Keep favorites offline',
+                  value: s.offlineFavorites,
+                  onChanged: (v) {
+                    s.offlineFavorites = v;
+                    OfflineStore.shared.sync();
+                  },
+                ),
+                Row2(
+                  icon: Icons.sd_storage_rounded,
+                  title: OfflineStore.shared.syncing ? 'Downloading…' : 'Offline files',
+                  value: '${(OfflineStore.shared.totalSize / 1024 / 1024).toStringAsFixed(1)} MB · ${OfflineStore.shared.count}',
+                ),
+                Row2(
+                  icon: Icons.delete_sweep_rounded,
+                  title: 'Remove offline files',
+                  tint: T.err,
+                  onTap: OfflineStore.shared.count == 0 ? null : OfflineStore.shared.removeAll,
+                ),
+              ],
+            ),
+            Section(
+              title: 'Notifications',
+              footer: Platform.isWindows
+                  ? 'Long-press or right-click a site or forum in Sites and pick "Alert me about new content". Windows checks every 30 minutes while iNUTT is open or minimized.'
+                  : 'Long-press a site or forum in Sites and pick "Alert me about new content". Android checks about every 30 minutes in the background. Discreet text says only "New content is waiting".',
+              children: [
+                SwitchRow(
+                  icon: Icons.notifications_active_rounded,
+                  title: 'New-content alerts',
+                  value: s.notifyNew,
+                  onChanged: (v) async {
+                    s.notifyNew = v;
+                    if (v) await NewContentWatcher.requestPermission();
+                    await NewContentWatcher.start();
+                  },
+                ),
+                SwitchRow(
+                  icon: Icons.notifications_paused_rounded,
+                  title: 'Discreet text',
+                  value: s.notifyDiscreet,
+                  onChanged: s.notifyNew ? (v) => s.notifyDiscreet = v : null,
+                ),
+                Row2(
+                  icon: Icons.list_rounded,
+                  title: 'Following',
+                  value: '${s.watchedSites.length} sites · ${s.watchedForums.length} forums',
+                ),
+              ],
+            ),
+            if (Platform.isWindows)
+              Section(
+                title: 'Quick hide',
+                footer: 'Press this key anywhere in iNUTT: whatever is open closes, the app locks (when a PIN is set) and minimizes.',
+                children: [
+                  Row2(
+                    icon: Icons.keyboard_rounded,
+                    title: 'Hide key',
+                    value: s.hideKey,
+                    onTap: () => _pickHideKey(context),
+                  ),
+                ],
+              ),
             Section(
               title: 'Playback',
               children: [
@@ -320,6 +402,28 @@ class _SettingsViewState extends State<SettingsView> {
       DownloadManager.shared.show('That file isn\'t an iNUTT backup', success: false);
     }
   }
+
+  void _pickHideKey(BuildContext context) => showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: T.navy,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final k in const ['F12', 'F9', 'F8', 'Pause', 'Scroll Lock'])
+            ListTile(
+              title: Text(k, style: T.text(15, color: T.ink)),
+              trailing: AppSettings.shared.hideKey == k ? const Icon(Icons.check_rounded, color: T.gold) : null,
+              onTap: () {
+                AppSettings.shared.hideKey = k;
+                Navigator.pop(ctx);
+              },
+            ),
+        ],
+      ),
+    ),
+  );
 
   void _pickSlideshow(BuildContext context) => showModalBottomSheet<void>(
     context: context,

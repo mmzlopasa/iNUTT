@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/downloads.dart';
+import '../core/extras.dart';
 
 import '../core/models.dart';
 import '../core/stores.dart';
@@ -28,6 +29,28 @@ class _FavoritesViewState extends State<FavoritesView> {
   /// null shows every favorite; otherwise one of your collections.
   String? _selected;
 
+  /// The Watch later queue instead of favorites.
+  bool _later = false;
+
+  Future<void> _favoritesMenu() async {
+    final on = AppSettings.shared.offlineFavorites;
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: T.navy,
+      builder: (ctx) => SafeArea(
+        child: ListTile(
+          leading: Icon(on ? Icons.cloud_off_rounded : Icons.download_for_offline_rounded, color: T.gold),
+          title: Text(on ? "Don't keep offline" : 'Keep offline (Wi-Fi)', style: T.text(15, color: T.ink)),
+          onTap: () => Navigator.pop(ctx, true),
+        ),
+      ),
+    );
+    if (ok != true) return;
+    AppSettings.shared.offlineFavorites = !on;
+    OfflineStore.shared.sync();
+    setState(() {});
+  }
+
   Future<void> _collectionMenu(MediaCollection c) async {
     final action = await showModalBottomSheet<int>(
       context: context,
@@ -43,6 +66,17 @@ class _FavoritesViewState extends State<FavoritesView> {
               onTap: () => Navigator.pop(ctx, 0),
             ),
             ListTile(
+              leading: Icon(
+                OfflineStore.shared.isOfflineCollection(c.id) ? Icons.cloud_off_rounded : Icons.download_for_offline_rounded,
+                color: T.gold,
+              ),
+              title: Text(
+                OfflineStore.shared.isOfflineCollection(c.id) ? "Don't keep offline" : 'Keep offline (Wi-Fi)',
+                style: T.text(15, color: T.ink),
+              ),
+              onTap: () => Navigator.pop(ctx, 2),
+            ),
+            ListTile(
               leading: const Icon(Icons.delete_rounded, color: T.err),
               title: Text('Delete collection', style: T.text(15, color: T.err)),
               subtitle: Text('The items stay in Favorites and on their sites.', style: T.text(12, color: T.muted)),
@@ -53,7 +87,10 @@ class _FavoritesViewState extends State<FavoritesView> {
       ),
     );
     if (!mounted || action == null) return;
-    if (action == 0) {
+    if (action == 2) {
+      OfflineStore.shared.toggleCollection(c.id);
+      setState(() {});
+    } else if (action == 0) {
       final n = await askName(context, 'Rename collection', initial: c.name);
       if (n != null) CollectionStore.shared.rename(c.id, n);
     } else {
@@ -78,11 +115,11 @@ class _FavoritesViewState extends State<FavoritesView> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([Library.shared, CollectionStore.shared]),
+    listenable: Listenable.merge([Library.shared, CollectionStore.shared, WatchLater.shared]),
     builder: (context, _) {
       final cols = CollectionStore.shared.collections;
-      final current = cols.where((c) => c.id == _selected).firstOrNull;
-      final source = current?.items ?? Library.shared.favorites;
+      final current = _later ? null : cols.where((c) => c.id == _selected).firstOrNull;
+      final source = _later ? WatchLater.shared.items : (current?.items ?? Library.shared.favorites);
       final items = _filter == null ? source : source.where((e) => e.kind == _filter).toList();
       return SkyScaffold(
         body: CustomScrollView(
@@ -99,7 +136,7 @@ class _FavoritesViewState extends State<FavoritesView> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(current == null ? 'FAVORITES' : 'COLLECTION', style: T.mono(11, spacing: 1.2)),
+                            Text(_later ? 'WATCH LATER' : (current == null ? 'FAVORITES' : 'COLLECTION'), style: T.mono(11, spacing: 1.2)),
                             Text('${source.length}', style: T.dot(34)),
                           ],
                         ),
@@ -124,11 +161,25 @@ class _FavoritesViewState extends State<FavoritesView> {
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   children: [
+                    GestureDetector(
+                      onLongPress: _favoritesMenu,
+                      onSecondaryTap: _favoritesMenu,
+                      child: Chip2(
+                        title: 'All favorites',
+                        icon: AppSettings.shared.offlineFavorites ? Icons.download_done_rounded : Icons.favorite_rounded,
+                        selected: current == null && !_later,
+                        onTap: () => setState(() {
+                          _selected = null;
+                          _later = false;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     Chip2(
-                      title: 'All favorites',
-                      icon: Icons.favorite_rounded,
-                      selected: current == null,
-                      onTap: () => setState(() => _selected = null),
+                      title: 'Watch later · ${WatchLater.shared.items.length}',
+                      icon: Icons.watch_later_rounded,
+                      selected: _later,
+                      onTap: () => setState(() => _later = true),
                     ),
                     for (final c in cols) ...[
                       const SizedBox(width: 8),
@@ -137,9 +188,12 @@ class _FavoritesViewState extends State<FavoritesView> {
                         onSecondaryTap: () => _collectionMenu(c),
                         child: Chip2(
                           title: '${c.name} · ${c.items.length}',
-                          icon: Icons.folder_rounded,
+                          icon: OfflineStore.shared.isOfflineCollection(c.id) ? Icons.download_done_rounded : Icons.folder_rounded,
                           selected: current?.id == c.id,
-                          onTap: () => setState(() => _selected = c.id),
+                          onTap: () => setState(() {
+                            _selected = c.id;
+                            _later = false;
+                          }),
                         ),
                       ),
                     ],
@@ -167,7 +221,13 @@ class _FavoritesViewState extends State<FavoritesView> {
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 sliver: SliverToBoxAdapter(
-                  child: current == null
+                  child: _later
+                      ? const EmptyState(
+                          icon: Icons.watch_later_outlined,
+                          title: 'Nothing in Watch later',
+                          message: 'Tap Later in the viewer or long-press a card. Items leave the queue once you have watched them.',
+                        )
+                      : current == null
                       ? const EmptyState(
                           icon: Icons.favorite_border_rounded,
                           title: 'No favorites yet',

@@ -6,6 +6,7 @@ import 'dart:ui' show Size;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import 'extras.dart';
 import 'site_adapters.dart';
 
 class NetException implements Exception {
@@ -50,7 +51,9 @@ class Net {
     req.headers.set(HttpHeaders.acceptHeader, 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7');
     if (referer != null) req.headers.set('Referer', referer.toString());
     // Adult sites show their content only once the age gate has been passed.
-    req.headers.set(HttpHeaders.cookieHeader, SiteAdapters.cookieHeader);
+    // Plus whatever you signed in to in the in-app browser.
+    final login = CookieJar.headerFor(url);
+    req.headers.set(HttpHeaders.cookieHeader, login == null ? SiteAdapters.cookieHeader : '${SiteAdapters.cookieHeader}; $login');
     headers?.forEach(req.headers.set);
     final resp = await req.close().timeout(const Duration(seconds: 25));
     if (resp.statusCode >= 400) {
@@ -67,6 +70,38 @@ class Net {
   }
 
   static Future<List<int>> bytes(Uri url, {Uri? referer}) async => (await fetch(url, referer: referer)).bytes;
+
+  /// Streams a file straight to disk. Returns its size.
+  static Future<int> download(Uri url, File dest, {Uri? referer}) async {
+    final req = await _client.getUrl(url).timeout(const Duration(seconds: 25));
+    req.headers.set(HttpHeaders.userAgentHeader, userAgent);
+    if (referer != null) req.headers.set('Referer', referer.toString());
+    final login = CookieJar.headerFor(url);
+    if (login != null) req.headers.set(HttpHeaders.cookieHeader, login);
+    final resp = await req.close().timeout(const Duration(seconds: 25));
+    if (resp.statusCode >= 400) {
+      await resp.drain<void>();
+      throw NetException('The site returned error ${resp.statusCode}.');
+    }
+    final tmp = File('${dest.path}.part');
+    final sink = tmp.openWrite();
+    var n = 0;
+    try {
+      await for (final chunk in resp) {
+        n += chunk.length;
+        sink.add(chunk);
+      }
+      await sink.close();
+    } catch (_) {
+      await sink.close();
+      try {
+        await tmp.delete();
+      } catch (_) {}
+      rethrow;
+    }
+    await tmp.rename(dest.path);
+    return n;
+  }
 
   /// Reddit JSON, trying www and old.reddit.com; adult subreddits need the over18 cookie.
   static Future<List<int>> redditJson(Uri jsonUrl) async {
@@ -90,8 +125,9 @@ class Net {
   }
 
   /// Headers the video player should send so hot-link protected media plays.
-  static Map<String, String> playerHeaders(Uri? referer) => {
+  static Map<String, String> playerHeaders(Uri? referer, [Uri? media]) => {
     'User-Agent': userAgent,
+    if (media != null && CookieJar.headerFor(media) != null) 'Cookie': CookieJar.headerFor(media)!,
     if (referer != null) 'Referer': referer.toString(),
     // CDNs that check where a stream is played from also look at the origin.
     if (referer != null && referer.hasScheme) 'Origin': '${referer.scheme}://${referer.host}',
