@@ -29,6 +29,18 @@ class AppRouter extends ChangeNotifier {
   final keys = {for (final t in AppTab.values) t: GlobalKey<NavigatorState>()};
   AppTab tab = AppTab.home;
 
+  /// The kind of media Home shows; also set from the Home tab's long-press menu.
+  final homeFilter = ValueNotifier<MediaKind?>(null);
+
+  void showHomeKind(MediaKind? kind) {
+    homeFilter.value = kind;
+    keys[AppTab.home]?.currentState?.popUntil((r) => r.isFirst);
+    if (tab != AppTab.home) {
+      tab = AppTab.home;
+      notifyListeners();
+    }
+  }
+
   void select(AppTab t) {
     if (t == tab) {
       keys[t]?.currentState?.popUntil((r) => r.isFirst);

@@ -89,132 +89,201 @@ class Net {
       };
 }
 
+enum RenderPriority { user, background }
+
 /// Renders JavaScript-heavy pages off screen and returns the final DOM. Nothing of it is ever shown.
+/// What the user tapped runs in its own lane, so it never waits behind background refreshes.
 class PageRenderer {
   static final PageRenderer shared = PageRenderer._();
   PageRenderer._();
 
-  Future<void> _queue = Future.value();
+  final _active = {RenderPriority.user: 0, RenderPriority.background: 0};
+  static const _limits = {RenderPriority.user: 3, RenderPriority.background: 2};
 
-  Future<String?> render(Uri url, {double settle = 1.5}) {
-    final c = Completer<String?>();
-    _queue = _queue.then((_) async => c.complete(await _render(url, settle)), onError: (_) => c.complete(null));
-    return c.future;
+  /// Background pages wait while the user is waiting for something.
+  int _userWaiting = 0;
+
+  Future<void> _acquire(RenderPriority p) async {
+    if (p == RenderPriority.user) _userWaiting++;
+    while (_active[p]! >= _limits[p]! || (p == RenderPriority.background && _userWaiting > 0)) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+    if (p == RenderPriority.user) _userWaiting--;
+    _active[p] = _active[p]! + 1;
   }
 
-  Future<String?> _render(Uri url, double settle) async {
-    final done = Completer<String?>();
-    HeadlessInAppWebView? web;
-    Timer? deadline;
-    Future<void> grab(InAppWebViewController c) async {
-      await Future<void>.delayed(Duration(milliseconds: (settle * 1000).round()));
-      try {
-        // Scroll once so lazy grids load their first screens.
-        await c.evaluateJavascript(source: 'window.scrollTo(0, document.body.scrollHeight / 2);');
-        await Future<void>.delayed(const Duration(milliseconds: 600));
-        final html = await c.evaluateJavascript(source: 'document.documentElement.outerHTML');
-        if (!done.isCompleted) done.complete(html is String ? html : null);
-      } catch (_) {
-        if (!done.isCompleted) done.complete(null);
-      }
-    }
+  void _release(RenderPriority p) => _active[p] = _active[p]! - 1;
 
+  /// An off-screen web view that starts loading `url`. `loaded` completes when the page finished or failed.
+  Future<(HeadlessInAppWebView, Completer<bool>)> _open(Uri url, {required bool media}) async {
+    final loaded = Completer<bool>();
+    final web = HeadlessInAppWebView(
+      initialUrlRequest: URLRequest(url: WebUri.uri(url)),
+      initialSize: const Size(390, 844),
+      initialSettings: InAppWebViewSettings(
+        userAgent: Net.userAgent,
+        mediaPlaybackRequiresUserGesture: !media,
+        allowsInlineMediaPlayback: true,
+        javaScriptEnabled: true,
+        blockNetworkImage: !media,
+      ),
+      onLoadStop: (c, _) {
+        if (!loaded.isCompleted) loaded.complete(true);
+      },
+      onReceivedError: (c, req, err) {
+        if (req.isForMainFrame == true && !loaded.isCompleted) loaded.complete(false);
+      },
+    );
+    await web.run();
+    return (web, loaded);
+  }
+
+  Future<void> _close(HeadlessInAppWebView web) async {
     try {
-      web = HeadlessInAppWebView(
-        initialUrlRequest: URLRequest(url: WebUri.uri(url)),
-        initialSettings: InAppWebViewSettings(
-          userAgent: Net.userAgent,
-          mediaPlaybackRequiresUserGesture: true,
-          javaScriptEnabled: true,
-          blockNetworkImage: true,
-        ),
-        onLoadStop: (c, _) => grab(c),
-        onReceivedError: (c, req, err) {
-          if (req.isForMainFrame == true && !done.isCompleted) done.complete(null);
-        },
-      );
-      deadline = Timer(const Duration(seconds: 20), () {
-        if (!done.isCompleted) done.complete(null);
-      });
-      await web.run();
-      return await done.future;
+      await web.dispose();
+    } catch (_) {}
+  }
+
+  Future<dynamic> _js(HeadlessInAppWebView web, String source) async {
+    try {
+      return await web.webViewController?.evaluateJavascript(source: source);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The final DOM of a listing page.
+  Future<String?> render(Uri url, {double settle = 1.5, RenderPriority priority = RenderPriority.background}) async {
+    await _acquire(priority);
+    HeadlessInAppWebView? web;
+    try {
+      final (w, loaded) = await _open(url, media: false);
+      web = w;
+      final ok = await loaded.future.timeout(const Duration(seconds: 14), onTimeout: () => false);
+      if (!ok && await w.webViewController?.getUrl() == null) return null;
+      // Trigger lazy-loaded content.
+      for (var i = 0; i < 3; i++) {
+        await _js(w, 'window.scrollTo(0, document.body.scrollHeight); 1');
+        await Future<void>.delayed(Duration(milliseconds: (settle / 3 * 1000).round()));
+      }
+      final html = await _js(w, 'document.documentElement.outerHTML');
+      return html is String ? html : null;
     } catch (e) {
       debugPrint('render failed: $e');
       return null;
     } finally {
-      deadline?.cancel();
-      try {
-        await web?.dispose();
-      } catch (_) {}
+      if (web != null) await _close(web);
+      _release(priority);
+    }
+  }
+
+  /// Opens one video's page and returns as soon as the page reveals its video file, instead of waiting
+  /// for the whole page. Falls back to the page's HTML when no video shows up in time.
+  Future<(CapturedVideo?, String?)> renderMedia(Uri url) async {
+    await _acquire(RenderPriority.user);
+    HeadlessInAppWebView? web;
+    try {
+      final (w, _) = await _open(url, media: true);
+      web = w;
+      final started = DateTime.now();
+      while (DateTime.now().difference(started).inMilliseconds < 9000) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        await _js(w, _playScript);
+        final list = await _collect(w, url);
+        for (final v in list) {
+          if (!isAd(v.url)) return (v, null);
+        }
+      }
+      final html = await _js(w, 'document.documentElement.outerHTML');
+      return (null, html is String ? html : null);
+    } catch (e) {
+      debugPrint('renderMedia failed: $e');
+      return (null, null);
+    } finally {
+      if (web != null) await _close(web);
+      _release(RenderPriority.user);
     }
   }
 
   /// Opens a TikTok-style page off screen, swipes through its feed and collects every video it loads:
-  /// `<video>` sources and video files the page requests. `rounds` is how many screens to swipe.
-  Future<List<CapturedVideo>> captureVideos(Uri url, {int rounds = 10}) {
-    final c = Completer<List<CapturedVideo>>();
-    _queue = _queue.then((_) async => c.complete(await _capture(url, rounds)), onError: (_) => c.complete(const []));
-    return c.future;
-  }
-
-  Future<List<CapturedVideo>> _capture(Uri url, int rounds) async {
-    final loaded = Completer<InAppWebViewController?>();
+  /// `<video>` sources and video files the page requests. `onFound` gets each new batch right away;
+  /// `cancelled` stops early.
+  Future<List<CapturedVideo>> captureVideos(Uri url,
+      {int rounds = 10, void Function(List<CapturedVideo>)? onFound, bool Function()? cancelled}) async {
+    await _acquire(RenderPriority.user);
     HeadlessInAppWebView? web;
     final found = <CapturedVideo>[];
     final keys = <String>{};
+    void take(List<CapturedVideo> list) {
+      final fresh = <CapturedVideo>[];
+      for (final v in list) {
+        if (!isAd(v.url) && keys.add(videoKey(v.url))) fresh.add(v);
+      }
+      if (fresh.isNotEmpty) {
+        found.addAll(fresh);
+        onFound?.call(fresh);
+      }
+    }
+
+    bool stop() => cancelled?.call() ?? false;
     try {
-      web = HeadlessInAppWebView(
-        initialUrlRequest: URLRequest(url: WebUri.uri(url)),
-        initialSize: const Size(390, 844),
-        initialSettings: InAppWebViewSettings(
-          userAgent: Net.userAgent,
-          mediaPlaybackRequiresUserGesture: false,
-          allowsInlineMediaPlayback: true,
-          javaScriptEnabled: true,
-        ),
-        onLoadStop: (c, _) {
-          if (!loaded.isCompleted) loaded.complete(c);
-        },
-        onReceivedError: (c, req, err) {
-          if (req.isForMainFrame == true && !loaded.isCompleted) loaded.complete(null);
-        },
-      );
-      await web.run();
-      final c = await loaded.future.timeout(const Duration(seconds: 18), onTimeout: () => web?.webViewController);
-      if (c == null) return found;
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-      for (var round = 0; round <= rounds; round++) {
-        if (round > 0) {
-          await c.evaluateJavascript(source: _swipeScript);
-          await Future<void>.delayed(const Duration(milliseconds: 900));
-        }
-        final page = await c.getUrl();
-        final json = await c.evaluateJavascript(source: _collectScript);
-        if (json is! String) continue;
-        final list = jsonDecode(json);
-        if (list is! List) continue;
-        for (final v in list.whereType<Map>()) {
-          final raw = v['u'] as String?;
-          if (raw == null) continue;
-          final base = page ?? url;
-          final u = Uri.tryParse(raw);
-          if (u == null) continue;
-          final abs = base.resolveUri(u);
-          final key = videoKey(abs);
-          if (!keys.add(key)) continue;
-          final p = v['p'] as String? ?? '';
-          final pu = p.isEmpty ? null : Uri.tryParse(p);
-          found.add(CapturedVideo(abs, pu == null ? null : base.resolveUri(pu), v['t'] as String? ?? ''));
-        }
+      final (w, _) = await _open(url, media: true);
+      web = w;
+      // Collect while the page is still loading; many feeds show their first video early.
+      final started = DateTime.now();
+      while (DateTime.now().difference(started).inMilliseconds < 10000 && !stop()) {
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        await _js(w, _playScript);
+        take(await _collect(w, url));
+        if (found.isNotEmpty && DateTime.now().difference(started).inMilliseconds > 2500) break;
+      }
+      for (var i = 0; i < rounds && !stop(); i++) {
+        await _js(w, _swipeScript);
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        take(await _collect(w, url));
       }
     } catch (e) {
       debugPrint('capture failed: $e');
     } finally {
-      try {
-        await web?.dispose();
-      } catch (_) {}
+      if (web != null) await _close(web);
+      _release(RenderPriority.user);
     }
     return found;
+  }
+
+  Future<List<CapturedVideo>> _collect(HeadlessInAppWebView web, Uri url) async {
+    final json = await _js(web, _collectScript);
+    if (json is! String) return const [];
+    final Object? list;
+    try {
+      list = jsonDecode(json);
+    } catch (_) {
+      return const [];
+    }
+    if (list is! List) return const [];
+    Uri base = url;
+    try {
+      base = (await web.webViewController?.getUrl()) ?? url;
+    } catch (_) {}
+    final out = <CapturedVideo>[];
+    for (final v in list.whereType<Map>()) {
+      final raw = v['u'] as String?;
+      final u = raw == null ? null : Uri.tryParse(raw);
+      if (u == null) continue;
+      final abs = base.resolveUri(u);
+      if (abs.scheme != 'http' && abs.scheme != 'https') continue;
+      final p = v['p'] as String? ?? '';
+      final pu = p.isEmpty ? null : Uri.tryParse(p);
+      out.add(CapturedVideo(abs, pu == null ? null : base.resolveUri(pu), v['t'] as String? ?? ''));
+    }
+    return out;
+  }
+
+  /// Pre-roll and tracking clips that pages load next to the real video.
+  static bool isAd(Uri u) {
+    final s = u.toString().toLowerCase();
+    const marks = ['/ads/', 'doubleclick', 'googlesyndication', 'imasdk', 'adserver', '/vast', 'preroll', 'pre-roll', 'exoclick', 'trafficjunky', 'juicyads'];
+    return marks.any(s.contains);
   }
 
   /// HLS variants of one video share a folder; count them once.
@@ -227,20 +296,32 @@ class PageRenderer {
     return u.host + path;
   }
 
+  static const _playScript = r"""
+(function(){
+  document.querySelectorAll('video').forEach(function(v){ v.muted=true; v.preload='auto'; try{ var p=v.play(); if(p&&p.catch)p.catch(function(){}); }catch(e){} });
+  var b=document.querySelector('.vjs-big-play-button,.ytp-large-play-button,.play-button,[class*=play-btn],[class*=playButton],[aria-label*=Play i]');
+  if(b&&!window.__inuttClicked){ window.__inuttClicked=1; try{ b.click(); }catch(e){} }
+  return 1;
+})()
+""";
+
   static const _collectScript = r"""
 (function(){
   var out=[], seen={};
   function add(u,p,t){ if(!u||u.indexOf('blob:')===0||u.indexOf('data:')===0||seen[u])return; seen[u]=1; out.push({u:String(u),p:String(p||''),t:String(t||'')}); }
   document.querySelectorAll('video').forEach(function(v){
-    v.muted=true; v.preload='auto';
     var p=v.poster||v.getAttribute('data-poster')||'';
     var box=v.closest('article,li,section,[class*=item],[class*=card],[class*=reel],[class*=short],[class*=video],[class*=post]');
     var t=box&&box.innerText?box.innerText.trim().split('\n')[0].slice(0,140):'';
     add(v.currentSrc||v.src||v.getAttribute('data-src'),p,t);
     v.querySelectorAll('source').forEach(function(s){ add(s.src||s.getAttribute('data-src'),p,t); });
   });
+  ['og:video:secure_url','og:video:url','og:video'].forEach(function(n){
+    var m=document.querySelector('meta[property="'+n+'"],meta[name="'+n+'"]');
+    if(m&&/\.(mp4|m3u8|webm|mov)(\?|#|$)/i.test(m.content||'')) add(m.content,'','');
+  });
   (performance.getEntriesByType('resource')||[]).forEach(function(e){
-    var n=e.name; if(/\.(mp4|m3u8|webm|mov)(\?|#|$)/i.test(n)) add(n,'','');
+    var n=e.name; if(/\.(mp4|m3u8|webm|mov)(\?|#|$)/i.test(n)&&!/\.(ts|m4s)(\?|#|$)/i.test(n)) add(n,'','');
   });
   return JSON.stringify(out);
 })()
@@ -254,7 +335,7 @@ class PageRenderer {
     if((s.overflowY==='auto'||s.overflowY==='scroll')&&e.scrollHeight>e.clientHeight+50) e.scrollTop+=e.clientHeight||h;
   });
   window.scrollBy(0,h);
-  document.querySelectorAll('video').forEach(function(v){ v.muted=true; var r=v.getBoundingClientRect(); if(r.top<h&&r.bottom>0){ try{v.play();}catch(e){} } });
+  document.querySelectorAll('video').forEach(function(v){ v.muted=true; var r=v.getBoundingClientRect(); if(r.top<h&&r.bottom>0){ try{ var p=v.play(); if(p&&p.catch)p.catch(function(){}); }catch(e){} } });
   return 1;
 })()
 """;

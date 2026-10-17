@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -27,14 +28,24 @@ class Disk {
   }
 
   static final Map<String, Future<void>> _pending = {};
+
+  static Future<String> _encode(Object value) => Isolate.run(() => jsonEncode(value));
   static int _seq = 0;
 
   /// Saves one file at a time per name, each through its own temporary file, so quick
   /// successive saves can never interleave and leave a broken file behind.
   static Future<void> save(String name, Object value) {
-    final text = jsonEncode(value);
+    // Encoding a large feed takes long enough to drop frames, so it runs in its own isolate.
+    final encoded = _encode(value);
     final prev = _pending[name] ?? Future<void>.value();
     final next = prev.then((_) async {
+      final String text;
+      try {
+        text = await encoded;
+      } catch (e) {
+        debugPrint('encode $name failed: $e');
+        return;
+      }
       final f = File('${dir.path}${Platform.pathSeparator}$name');
       final tmp = File('${f.path}.${_seq++}.tmp');
       try {
@@ -128,6 +139,9 @@ class Library extends ChangeNotifier {
   List<HistoryEntry> history = [];
   final Set<String> _favIds = {};
 
+  /// Changes only when favorites change, so grids don't redraw on every history entry.
+  final ValueNotifier<int> favoritesVersion = ValueNotifier(0);
+
   void load() {
     final f = Disk.load('favorites.json');
     if (f is List) favorites = f.map((e) => MediaItem.fromJson(e as Map<String, dynamic>)).toList();
@@ -145,6 +159,7 @@ class Library extends ChangeNotifier {
       _favIds.add(item.id);
       favorites.insert(0, item);
     }
+    favoritesVersion.value++;
     notifyListeners();
     Disk.save('favorites.json', favorites.map((e) => e.toJson()).toList());
   }

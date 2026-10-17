@@ -9,7 +9,7 @@ import '../ui/router.dart';
 import '../ui/theme.dart';
 import 'settings.dart';
 
-final _all = Listenable.merge([FeedEngine.shared, SiteStore.shared, Library.shared]);
+final _all = Listenable.merge([FeedEngine.shared, SiteStore.shared, Library.shared.favoritesVersion]);
 
 /// Resolves a navigation route to a site page or one of its categories.
 class SiteRouteView extends StatelessWidget {

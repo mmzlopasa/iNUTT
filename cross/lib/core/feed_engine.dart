@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 
@@ -21,6 +22,16 @@ class FeedEngine extends ChangeNotifier {
 
   final Map<String, Uri> _nextPages = {};
   final Map<String, ResolvedMedia> _resolved = {};
+  final Map<String, DateTime> _resolvedAt = {};
+  final Map<String, Future<ResolvedMedia?>> _inflight = {};
+  final List<MediaItem> _prefetchQueue = [];
+  int _prefetching = 0;
+
+  /// Bumped on every change; Home's lists are computed once per version.
+  int _version = 0;
+  Timer? _notifyTimer;
+  final Map<String, (int, Object, List<MediaItem>)> _homeCache = {};
+  (int, String, List<MediaItem>)? _mixedCache;
 
   /// Per feed: whether its thumbnail tiles turned out to be categories (checked once per launch).
   final Map<String, bool> _listingProbe = {};
@@ -35,6 +46,28 @@ class FeedEngine extends ChangeNotifier {
     (raw['next'] as Map? ?? {}).forEach((k, v) => _nextPages[k as String] = Uri.parse(v as String));
     final lr = raw['lastRefresh'];
     if (lr is int) lastRefresh = DateTime.fromMillisecondsSinceEpoch(lr);
+    // What was opened in the last hours opens again without loading.
+    final res = Disk.load('resolved.json');
+    if (res is Map) {
+      final now = DateTime.now();
+      res.forEach((k, v) {
+        if (v is! Map) return;
+        final at = v['at'];
+        final m = ResolvedMedia.fromJson(v['media']);
+        if (at is! int || m == null) return;
+        final t = DateTime.fromMillisecondsSinceEpoch(at);
+        if (now.difference(t) > const Duration(hours: 6)) return;
+        _resolved[k as String] = m;
+        _resolvedAt[k] = t;
+      });
+    }
+  }
+
+  /// Screens redraw at most five times a second, however many feeds change at once.
+  void _changed() {
+    _version++;
+    if (_notifyTimer?.isActive ?? false) return;
+    _notifyTimer = Timer(const Duration(milliseconds: 200), notifyListeners);
   }
 
   static String key(Site site, [SiteCategory? category]) => category == null ? site.id : '${site.id}|${category.url}';
@@ -52,6 +85,14 @@ class FeedEngine extends ChangeNotifier {
   /// What a site contributes to Home and its Latest section: real media, never category covers.
   /// When the site's own page only lists categories, its newest items come from those categories.
   List<MediaItem> homeItems(Site site) {
+    final c = _homeCache[site.id];
+    if (c != null && c.$1 == _version && identical(c.$2, site.categories)) return c.$3;
+    final items = _computeHomeItems(site);
+    _homeCache[site.id] = (_version, site.categories, items);
+    return items;
+  }
+
+  List<MediaItem> _computeHomeItems(Site site) {
     final covers = site.categories.map((c) => c.thumbnailUrl?.toString()).whereType<String>().toSet();
     final root = (feeds[key(site)] ?? const <MediaItem>[])
         .where((i) => !i.isListing && !covers.contains(i.thumbnailUrl?.toString()) && site.categoryMatching(i.pageUrl) == null)
@@ -72,6 +113,9 @@ class FeedEngine extends ChangeNotifier {
 
   /// All cached items across enabled sites, interleaved so no site dominates.
   List<MediaItem> mixedFeed(List<Site> sites) {
+    final key = sites.map((s) => '${s.id}:${s.categories.length}').join(',');
+    final c = _mixedCache;
+    if (c != null && c.$1 == _version && c.$2 == key) return c.$3;
     final lists = sites.map(homeItems).toList();
     final out = <MediaItem>[];
     final seen = <String>{};
@@ -81,6 +125,7 @@ class FeedEngine extends ChangeNotifier {
         if (i < l.length && !l[i].isListing && seen.add(l[i].id)) out.add(l[i]);
       }
     }
+    _mixedCache = (_version, key, out);
     return out;
   }
 
@@ -96,7 +141,7 @@ class FeedEngine extends ChangeNotifier {
     final sites = SiteStore.shared.enabledSites;
     if (sites.isEmpty) return;
     isRefreshingAll = true;
-    notifyListeners();
+    _changed();
     final queue = [...sites];
     Future<void> worker() async {
       while (queue.isNotEmpty) {
@@ -107,7 +152,7 @@ class FeedEngine extends ChangeNotifier {
     await Future.wait(List.generate(4, (_) => worker()));
     isRefreshingAll = false;
     lastRefresh = DateTime.now();
-    notifyListeners();
+    _changed();
     _scheduleSave();
     _prefetchThumbnails();
   }
@@ -126,7 +171,7 @@ class FeedEngine extends ChangeNotifier {
     final k = key(site, category);
     if (loading.contains(k)) return;
     loading.add(k);
-    notifyListeners();
+    _changed();
     try {
       final r = await fetchListing(category?.url ?? site.url, category?.url ?? site.url, site, category?.name);
       var old = [...?feeds[k]];
@@ -183,8 +228,22 @@ class FeedEngine extends ChangeNotifier {
       if ((feeds[k] ?? const []).isEmpty) errors[k] = e.toString();
     } finally {
       loading.remove(k);
-      notifyListeners();
+      _changed();
     }
+  }
+
+  /// Next pages for the Home feed: each site's own page, or the categories its Home items come from.
+  Future<void> loadMoreHome(List<Site> sites) async {
+    final jobs = <Future<void>>[];
+    for (final site in sites.take(12)) {
+      if (_nextPages.containsKey(key(site))) jobs.add(loadMore(site, null));
+      if (site.categories.isNotEmpty && needsCategoryFeeds(feeds[key(site)] ?? const [])) {
+        for (final c in site.categories.take(3)) {
+          if (_nextPages.containsKey(key(site, c))) jobs.add(loadMore(site, c));
+        }
+      }
+    }
+    await Future.wait(jobs);
   }
 
   Future<void> loadMore(Site site, SiteCategory? category) async {
@@ -192,7 +251,7 @@ class FeedEngine extends ChangeNotifier {
     final next = _nextPages[k];
     if (next == null || loading.contains(k)) return;
     loading.add(k);
-    notifyListeners();
+    _changed();
     try {
       final r = await fetchListing(next, category?.url ?? site.url, site, category?.name);
       final list = [...?feeds[k]];
@@ -209,7 +268,7 @@ class FeedEngine extends ChangeNotifier {
       _nextPages.remove(k);
     } finally {
       loading.remove(k);
-      notifyListeners();
+      _changed();
     }
   }
 
@@ -226,17 +285,18 @@ class FeedEngine extends ChangeNotifier {
     feeds.removeWhere((k, _) => k.startsWith(siteId));
     _nextPages.removeWhere((k, _) => k.startsWith(siteId));
     _scheduleSave();
-    notifyListeners();
+    _changed();
   }
 
   void clearCache() {
     feeds.clear();
     _nextPages.clear();
     _resolved.clear();
+    _resolvedAt.clear();
     _listingProbe.clear();
     lastRefresh = null;
     _scheduleSave();
-    notifyListeners();
+    _changed();
   }
 
   // MARK: Fetching
@@ -246,7 +306,7 @@ class FeedEngine extends ChangeNotifier {
       final jsonUrl = url.path.endsWith('.json') ? url : Scraper.redditJsonUrl(url);
       try {
         final data = await Net.redditJson(jsonUrl);
-        return Scraper.parseReddit(data, base, site, categoryName);
+        return await _parseRedditOff(data, base, site, categoryName);
       } catch (e) {
         // JSON refused: the RSS feed of the same page still lists images and thumbnails.
         var path = url.path;
@@ -267,8 +327,8 @@ class FeedEngine extends ChangeNotifier {
     if (site.renderMode != RenderMode.full || !allowRender) {
       final f = await Net.fetch(url);
       final text = f.text;
-      if (Scraper.looksLikeFeed(text)) return Scraper.parseFeed(text, f.finalUrl, site, categoryName);
-      result = Scraper.parseListing(text, f.finalUrl, site, categoryName);
+      if (Scraper.looksLikeFeed(text)) return _parseFeedOff(text, f.finalUrl, site, categoryName);
+      result = await _parseListingOff(text, f.finalUrl, site, categoryName);
       staticOk = true;
     }
     final needsRender = site.renderMode == RenderMode.full ||
@@ -276,7 +336,7 @@ class FeedEngine extends ChangeNotifier {
     if (allowRender && needsRender) {
       final html = await PageRenderer.shared.render(url);
       if (html != null) {
-        final r2 = Scraper.parseListing(html, url, site, categoryName);
+        final r2 = await _parseListingOff(html, url, site, categoryName);
         if (r2.items.length > result.items.length) {
           result.items = r2.items;
           result.nextPage ??= r2.nextPage;
@@ -290,6 +350,17 @@ class FeedEngine extends ChangeNotifier {
     }
     return result;
   }
+
+  // Parsing runs in its own isolate so scrolling never stutters while pages load.
+  static Future<ScrapeResult> _parseListingOff(String html, Uri url, Site site, String? cat) =>
+      Isolate.run(() => Scraper.parseListing(html, url, site, cat));
+  static Future<ScrapeResult> _parseFeedOff(String xml, Uri url, Site site, String? cat) =>
+      Isolate.run(() => Scraper.parseFeed(xml, url, site, cat));
+  static Future<ScrapeResult> _parseRedditOff(List<int> data, Uri url, Site site, String? cat) =>
+      Isolate.run(() => Scraper.parseReddit(data, url, site, cat));
+  static Future<ResolvedMedia?> _resolveDetailOff(String html, Uri url, int maxQ) =>
+      Isolate.run(() => Scraper.resolveDetail(html, url, maxQ));
+  static Future<bool> _isListingOff(String html, Uri url, Site site) => Isolate.run(() => isListingHtml(html, url, site));
 
   // MARK: Category tiles
 
@@ -315,7 +386,7 @@ class FeedEngine extends ChangeNotifier {
   static Future<bool?> isListingPage(Uri url, Site site) async {
     try {
       final f = await Net.fetch(url);
-      return isListingHtml(f.text, f.finalUrl, site);
+      return await _isListingOff(f.text, f.finalUrl, site);
     } catch (_) {
       return null;
     }
@@ -338,6 +409,7 @@ class FeedEngine extends ChangeNotifier {
         if (i.id == item.id) i.isListing = true;
       }
     }
+    _changed();
     _scheduleSave();
   }
 
@@ -345,78 +417,131 @@ class FeedEngine extends ChangeNotifier {
 
   ResolvedMedia? cachedResolution(MediaItem item) => _resolved[item.id];
 
-  Future<ResolvedMedia?> resolve(MediaItem item) async {
+  /// The playable file behind an item. Answers instantly from the cache, joins a load that is already
+  /// running, and otherwise loads it now ahead of any background work.
+  Future<ResolvedMedia?> resolve(MediaItem item, {RenderPriority priority = RenderPriority.user}) async {
     final cached = _resolved[item.id];
     if (cached != null) return cached;
-    final maxQ = AppSettings.shared.maxQuality;
-    ResolvedMedia? result;
-    final site = SiteStore.shared.site(item.siteId);
+    final running = _inflight[item.id];
+    final r = await (running ?? _track(item, _resolveUncached(item, allowRender: true, priority: priority)));
+    if (r != null) return r;
+    // Nothing better found: show the thumbnail, but don't remember it so the next open tries again.
+    if (running != null) {
+      final again = await _track(item, _resolveUncached(item, allowRender: true, priority: priority));
+      if (again != null) return again;
+    }
+    final t = item.thumbnailUrl;
+    if (t == null) return null;
+    return ResolvedMedia(url: t, kind: item.kind == MediaKind.gif ? MediaKind.gif : MediaKind.image, referer: item.pageUrl);
+  }
 
+  Future<ResolvedMedia?> _track(MediaItem item, Future<ResolvedMedia?> f) {
+    final tracked = f.then((r) {
+      _inflight.remove(item.id);
+      if (r != null) _remember(item, r);
+      return r;
+    }, onError: (_) {
+      _inflight.remove(item.id);
+      return null;
+    });
+    _inflight[item.id] = tracked;
+    return tracked;
+  }
+
+  /// Loads items as they scroll into view, newest request first, so a tap on them opens at once.
+  /// Pages that need a browser are left for the tap.
+  void prefetch(MediaItem item) {
+    if (item.isListing || item.mediaUrl != null || item.pageUrl == null) return;
+    if (_resolved.containsKey(item.id) || _inflight.containsKey(item.id)) return;
+    _prefetchQueue.removeWhere((e) => e.id == item.id);
+    _prefetchQueue.add(item);
+    if (_prefetchQueue.length > 40) _prefetchQueue.removeRange(0, _prefetchQueue.length - 40);
+    _pumpPrefetch();
+  }
+
+  void _pumpPrefetch() {
+    while (_prefetching < 3 && _prefetchQueue.isNotEmpty) {
+      final item = _prefetchQueue.removeLast();
+      if (_resolved.containsKey(item.id) || _inflight.containsKey(item.id)) continue;
+      _prefetching++;
+      _track(item, _resolveUncached(item, allowRender: false, priority: RenderPriority.background)).whenComplete(() {
+        _prefetching--;
+        _pumpPrefetch();
+      });
+    }
+  }
+
+  void _remember(MediaItem item, ResolvedMedia r) {
+    _resolved[item.id] = r;
+    _resolvedAt[item.id] = DateTime.now();
+    if (r.isListing) {
+      _markListing(item);
+    } else if (r.kind != item.kind) {
+      for (final list in feeds.values) {
+        for (final i in list) {
+          if (i.id == item.id) i.kind = r.kind;
+        }
+      }
+      item.kind = r.kind;
+      _changed();
+    }
+    _scheduleSave();
+  }
+
+  Future<ResolvedMedia?> _resolveUncached(MediaItem item, {required bool allowRender, required RenderPriority priority}) async {
+    final maxQ = AppSettings.shared.maxQuality;
+    final site = SiteStore.shared.site(item.siteId);
     try {
       final g = item.gallery;
       final page = item.pageUrl;
-      if (g != null && g.length > 1) {
-        result = ResolvedMedia(url: g.first, kind: MediaKind.image, gallery: g);
-      } else if (page != null && item.mediaUrl == null && Scraper.isReddit(page)) {
-        final data = await Net.redditJson(Scraper.redditJsonUrl(page));
-        final posts = Scraper.parseReddit(data, page, site ?? Site(name: item.siteName, url: page), null).items;
-        if (posts.isNotEmpty) {
-          final p = posts.first;
-          if (p.gallery != null && p.gallery!.length > 1) {
-            result = ResolvedMedia(url: p.gallery!.first, kind: MediaKind.image, gallery: p.gallery!);
-          } else if (p.mediaUrl != null) {
-            result = ResolvedMedia(url: p.mediaUrl!, kind: p.kind);
-          }
-        }
-      } else if (item.mediaUrl != null) {
+      if (g != null && g.length > 1) return ResolvedMedia(url: g.first, kind: MediaKind.image, gallery: g);
+      if (item.mediaUrl != null) {
         var url = item.mediaUrl!;
         var kind = MediaKind.guess(url) ?? item.kind;
         if (url.path.toLowerCase().endsWith('.gifv')) {
           url = Uri.parse(url.toString().replaceAll('.gifv', '.mp4'));
           kind = MediaKind.video;
         }
-        result = ResolvedMedia(url: url, kind: kind, referer: item.pageUrl ?? item.mediaUrl);
-      } else if (page != null) {
-        if (site?.renderMode != RenderMode.full) {
-          try {
-            final f = await Net.fetch(page);
-            final html = f.text;
-            if (item.kind != MediaKind.video && item.duration == null && site != null && isListingHtml(html, f.finalUrl, site)) {
-              final r = ResolvedMedia(url: page, kind: MediaKind.image, referer: page, isListing: true);
-              _resolved[item.id] = r;
-              _markListing(item);
-              return r;
-            }
-            result = Scraper.resolveDetail(html, f.finalUrl, maxQ);
-          } catch (_) {}
-        }
-        final wantsVideo = item.kind == MediaKind.video && result?.kind != MediaKind.video;
-        if (result == null || wantsVideo || site?.renderMode == RenderMode.full) {
-          final html = await PageRenderer.shared.render(page, settle: 1.2);
-          if (html != null) {
-            final r2 = Scraper.resolveDetail(html, page, maxQ);
-            if (r2 != null && (result == null || r2.kind == MediaKind.video)) result = r2;
+        return ResolvedMedia(url: url, kind: kind, referer: item.pageUrl ?? item.mediaUrl);
+      }
+      if (page == null) return null;
+      if (Scraper.isReddit(page)) {
+        final data = await Net.redditJson(Scraper.redditJsonUrl(page));
+        final posts = (await _parseRedditOff(data, page, site ?? Site(name: item.siteName, url: page), null)).items;
+        if (posts.isEmpty) return null;
+        final p = posts.first;
+        if (p.gallery != null && p.gallery!.length > 1) return ResolvedMedia(url: p.gallery!.first, kind: MediaKind.image, gallery: p.gallery!);
+        if (p.mediaUrl != null) return ResolvedMedia(url: p.mediaUrl!, kind: p.kind, referer: page);
+        return null;
+      }
+      ResolvedMedia? result;
+      if (site?.renderMode != RenderMode.full) {
+        try {
+          final f = await Net.fetch(page);
+          final html = f.text;
+          if (item.kind != MediaKind.video && item.duration == null && site != null && await _isListingOff(html, f.finalUrl, site)) {
+            return ResolvedMedia(url: page, kind: MediaKind.image, referer: page, isListing: true);
           }
+          result = await _resolveDetailOff(html, f.finalUrl, maxQ);
+        } catch (_) {}
+      }
+      final wantsVideo = item.kind == MediaKind.video && result?.kind != MediaKind.video;
+      if (result == null || wantsVideo || site?.renderMode == RenderMode.full) {
+        if (!allowRender) return result != null && !wantsVideo ? result : null;
+        // Returns as soon as the page shows its video, not when the whole page is done.
+        final (video, html) = await PageRenderer.shared.renderMedia(page);
+        if (video != null) {
+          return ResolvedMedia(url: video.url, kind: MediaKind.guess(video.url) == MediaKind.gif ? MediaKind.gif : MediaKind.video, referer: page);
+        }
+        if (html != null) {
+          final r2 = await _resolveDetailOff(html, page, maxQ);
+          if (r2 != null && (result == null || r2.kind == MediaKind.video)) result = r2;
         }
       }
-    } catch (_) {}
-    if (result == null && item.thumbnailUrl != null) {
-      result = ResolvedMedia(
-          url: item.thumbnailUrl!, kind: item.kind == MediaKind.gif ? MediaKind.gif : MediaKind.image, referer: item.pageUrl);
+      return result;
+    } catch (_) {
+      return null;
     }
-    if (result != null) {
-      _resolved[item.id] = result;
-      if (result.kind != item.kind) {
-        for (final list in feeds.values) {
-          for (final i in list) {
-            if (i.id == item.id) i.kind = result.kind;
-          }
-        }
-        item.kind = result.kind;
-        _scheduleSave();
-      }
-    }
-    return result;
   }
 
   // MARK: Search
@@ -479,6 +604,11 @@ class FeedEngine extends ChangeNotifier {
       'feeds': feeds.map((k, v) => MapEntry(k, v.map((e) => e.toJson()).toList())),
       'next': _nextPages.map((k, v) => MapEntry(k, v.toString())),
       'lastRefresh': lastRefresh?.millisecondsSinceEpoch,
+    });
+    final recent = _resolvedAt.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    Disk.save('resolved.json', {
+      for (final e in recent.take(3000))
+        if (_resolved[e.key] case final m?) e.key: {'media': m.toJson(), 'at': e.value.millisecondsSinceEpoch},
     });
   }
 }

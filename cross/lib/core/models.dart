@@ -9,8 +9,8 @@ enum MediaKind {
 
   String get label => switch (this) {
         MediaKind.image => 'Images',
-        MediaKind.gif => 'GIF',
-        MediaKind.video => 'Video',
+        MediaKind.gif => 'GIFs',
+        MediaKind.video => 'Videos',
       };
 
   static MediaKind? guess(Uri? url) {
@@ -267,6 +267,27 @@ class ResolvedMedia {
   final Uri? referer;
   final bool isListing;
   const ResolvedMedia({required this.url, required this.kind, this.gallery = const [], this.referer, this.isListing = false});
+
+  Map<String, dynamic> toJson() => {
+        'url': url.toString(),
+        'kind': kind.name,
+        if (gallery.isNotEmpty) 'gallery': gallery.map((e) => e.toString()).toList(),
+        if (referer != null) 'referer': referer.toString(),
+        if (isListing) 'isListing': true,
+      };
+
+  static ResolvedMedia? fromJson(Object? j) {
+    if (j is! Map) return null;
+    final u = Uri.tryParse(j['url'] as String? ?? '');
+    if (u == null) return null;
+    return ResolvedMedia(
+      url: u,
+      kind: MediaKind.values.firstWhere((k) => k.name == j['kind'], orElse: () => MediaKind.image),
+      gallery: [for (final g in (j['gallery'] as List? ?? const [])) ?Uri.tryParse(g as String)],
+      referer: j['referer'] == null ? null : Uri.tryParse(j['referer'] as String),
+      isListing: j['isListing'] == true,
+    );
+  }
 }
 
 class ScrapeResult {

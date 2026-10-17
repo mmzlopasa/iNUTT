@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/downloads.dart';
+import '../core/feed_engine.dart';
 import '../core/image_cache.dart';
 import '../core/models.dart';
 import '../core/stores.dart';
@@ -120,11 +121,17 @@ class SliverMediaGrid extends StatelessWidget {
   final VoidCallback? onReachEnd;
   const SliverMediaGrid({super.key, required this.items, this.onReachEnd});
 
+  /// Fixed per list, so cards don't jump when an item turns out to be a video while scrolling.
+  static final Map<String, double> _aspects = {};
+
   @override
   Widget build(BuildContext context) {
-    final sample = items.take(30).toList();
-    final videos = sample.where((e) => e.kind == MediaKind.video).length;
-    final aspect = videos * 2 > sample.length ? 16 / 11 : 4 / 5;
+    final aspect = _aspects.putIfAbsent(items.isEmpty ? '' : items.first.id, () {
+      final sample = items.take(30).toList();
+      final videos = sample.where((e) => e.kind == MediaKind.video).length;
+      return videos * 2 > sample.length ? 16 / 11 : 4 / 5;
+    });
+    if (_aspects.length > 200) _aspects.clear();
     return SliverGrid(
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: gridColumns(context),
@@ -143,6 +150,8 @@ class SliverMediaGrid extends StatelessWidget {
             ]);
           }
           final item = items[idx];
+          // Load what's on screen ahead of the tap, so it opens at once.
+          FeedEngine.shared.prefetch(item);
           return Pressable(
             onTap: () => AppRouter.shared.open(items, idx),
             onLongPress: () => showMediaActions(context, item),

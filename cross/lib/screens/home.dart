@@ -21,7 +21,42 @@ class HomeView extends StatefulWidget {
 }
 
 class _HomeViewState extends State<HomeView> {
-  MediaKind? _filter;
+  int _latestLimit = 120;
+  bool _loadingMore = false;
+  MediaKind? get _filter => AppRouter.shared.homeFilter.value;
+
+  @override
+  void initState() {
+    super.initState();
+    AppRouter.shared.homeFilter.addListener(_filterChanged);
+  }
+
+  @override
+  void dispose() {
+    AppRouter.shared.homeFilter.removeListener(_filterChanged);
+    super.dispose();
+  }
+
+  void _filterChanged() => setState(() => _latestLimit = 120);
+
+  /// Shows more of what is loaded, then asks the sites for their next pages.
+  void _moreLatest(int total, int shownLimit) {
+    // Several cards near the end ask at once; act once per page.
+    if (!mounted || shownLimit != _latestLimit) return;
+    if (_latestLimit < total) {
+      setState(() => _latestLimit += 120);
+      return;
+    }
+    if (_loadingMore) return;
+    setState(() => _loadingMore = true);
+    FeedEngine.shared.loadMoreHome(SiteStore.shared.enabledSites).whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        _loadingMore = false;
+        _latestLimit += 120;
+      });
+    });
+  }
 
   String get _greeting {
     final h = DateTime.now().hour;
@@ -32,7 +67,7 @@ class _HomeViewState extends State<HomeView> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: Listenable.merge([FeedEngine.shared, SiteStore.shared, Library.shared]),
+        listenable: Listenable.merge([FeedEngine.shared, SiteStore.shared, Library.shared.favoritesVersion]),
         builder: (context, _) {
           final engine = FeedEngine.shared;
           final enabled = SiteStore.shared.enabledSites;
@@ -70,9 +105,11 @@ class _HomeViewState extends State<HomeView> {
               ),
             ));
           } else {
-            if (items.isNotEmpty) slivers.add(SliverToBoxAdapter(child: HeroCarousel(items: items.take(8).toList())));
+            if (items.isNotEmpty) {
+              slivers.add(SliverToBoxAdapter(child: HeroCarousel(key: ValueKey(_filter), items: items.take(8).toList())));
+            }
             slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 18)));
-            slivers.add(SliverToBoxAdapter(child: KindFilterBar(filter: _filter, onChanged: (k) => setState(() => _filter = k))));
+            slivers.add(SliverToBoxAdapter(child: KindFilterBar(filter: _filter, onChanged: (k) => AppRouter.shared.homeFilter.value = k)));
             if (_filter == null) {
               for (final s in enabled) {
                 slivers.add(SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.only(top: 22), child: SiteRow(site: s))));
@@ -82,11 +119,30 @@ class _HomeViewState extends State<HomeView> {
               slivers.add(SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 26, 16, 12),
                 sliver: SliverToBoxAdapter(
-                    child: SectionHeader(title: 'Latest', subtitle: '${items.length} items from ${enabled.length} sites')),
+                    child: SectionHeader(
+                        title: _filter == null ? 'Latest' : 'Latest ${_filter!.label}',
+                        subtitle: '${items.length} items from ${enabled.length} sites')),
               ));
+              final total = items.length;
+              final limit = _latestLimit;
               slivers.add(SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                sliver: SliverMediaGrid(items: items.take(120).toList()),
+                sliver: SliverMediaGrid(items: items.take(_latestLimit).toList(), onReachEnd: () => _moreLatest(total, limit)),
+              ));
+              if (_loadingMore) {
+                slivers.add(const SliverToBoxAdapter(
+                    child: Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator(strokeWidth: 2.4, color: T.gold)))));
+              }
+            } else if (_filter != null) {
+              slivers.add(SliverPadding(
+                padding: const EdgeInsets.all(16),
+                sliver: SliverToBoxAdapter(
+                  child: EmptyState(
+                    icon: Icons.filter_alt_off_rounded,
+                    title: 'No ${_filter!.label} yet',
+                    message: 'None of your sites has shown ${_filter!.label} so far. Pull down to refresh.',
+                  ),
+                ),
               ));
             }
           }

@@ -55,29 +55,52 @@ class ReelsStore extends ChangeNotifier {
     if (items.isEmpty) await refresh();
   }
 
+  /// While set, captured videos of this source go on screen as soon as they load.
+  String? _streamSource;
+  List<MediaItem> _streamed = [];
+  bool _streamFresh = false;
+  bool _stopCapture = false;
+
   Future<void> refresh() async {
     final site = this.site;
     if (site == null || loading) return;
     final source = AppSettings.shared.reelsSource;
     loading = true;
     notifyListeners();
+    // TikTok-style pages load their videos while you swipe: play through the page off screen and
+    // show each video the moment it loads, while the page's links are read at the same time.
     _rounds = 0;
+    _streamSource = source;
+    _streamed = [];
+    _streamFresh = true;
+    _stopCapture = false;
+    final captureFuture = _capture(site, 10);
     ScrapeResult? r;
     try {
       r = await FeedEngine.fetchListing(site.url, site.url, site, null);
     } catch (_) {}
-    var list = <MediaItem>[];
     final strong = (r?.items ?? []).where((i) => !i.isListing && (i.kind == MediaKind.video || i.kind == MediaKind.gif || i.duration != null));
-    // TikTok-style pages load their videos while you swipe: play through the page and keep what it loads.
-    if (strong.length < 6) {
-      final captured = await _capture(site, 10);
-      if (captured.length >= 2) {
+
+    var list = <MediaItem>[];
+    Uri? nextPage;
+    if (strong.length >= 6 && _streamed.length < 2) {
+      // A normal listing of videos: use it and stop the capture.
+      _stopCapture = true;
+      _streamSource = null;
+      final have = _streamed.map((e) => e.id).toSet();
+      list = [..._streamed, ...reels(r?.items ?? const []).where((e) => !have.contains(e.id))];
+      nextPage = r?.nextPage;
+    } else {
+      final captured = await captureFuture;
+      _streamSource = null;
+      if (captured.isNotEmpty) {
         list = captured;
         _rounds = 10;
       }
     }
     if (list.isEmpty && r != null) {
       list = reels(r.items);
+      nextPage = r.nextPage;
       // A page of categories: play the first ones.
       if (list.length < 4) {
         for (final c in r.categories.take(3)) {
@@ -97,8 +120,14 @@ class ReelsStore extends ChangeNotifier {
       unawaited(loadIfNeeded());
       return;
     }
-    items = list;
-    _next = _rounds > 0 ? null : r?.nextPage;
+    // Videos that streamed in are on screen already: keep them first so the reel being watched stays.
+    if (_streamed.isEmpty) {
+      items = list;
+    } else {
+      final have = items.map((e) => e.id).toSet();
+      items = [...items, ...list.where((e) => !have.contains(e.id))];
+    }
+    _next = _rounds > 0 ? null : nextPage;
     _loadedSource = AppSettings.shared.reelsSource;
     error = null;
     _save();
@@ -111,18 +140,16 @@ class ReelsStore extends ChangeNotifier {
     if (site == null || loading) return;
     final source = AppSettings.shared.reelsSource;
     if (_rounds > 0) {
-      // Swipe further through the page for the next videos.
+      // Swipe further through the page for the next videos, adding each as it loads.
       if (_rounds >= 60) return;
       loading = true;
       _rounds += 10;
-      final have = items.map((e) => e.id).toSet();
-      final more = await _capture(site, _rounds);
-      if (source != AppSettings.shared.reelsSource) {
-        loading = false;
-        return;
-      }
-      items = [...items, ...more.where((e) => !have.contains(e.id))];
-      _save();
+      _streamSource = source;
+      _streamFresh = false;
+      _stopCapture = false;
+      await _capture(site, _rounds);
+      _streamSource = null;
+      if (source == AppSettings.shared.reelsSource) _save();
       loading = false;
       notifyListeners();
       return;
@@ -145,11 +172,8 @@ class ReelsStore extends ChangeNotifier {
   }
 
   Future<List<MediaItem>> _capture(Site site, int rounds) async {
-    final found = await PageRenderer.shared.captureVideos(site.url, rounds: rounds);
-    return [
-      for (final v in found)
-        // Every video comes from the same page; tell them apart by their file.
-        MediaItem(
+    MediaItem item(CapturedVideo v) => MediaItem(
+          // Every video comes from the same page; tell them apart by their file.
           id: hashKey(v.url.toString()),
           siteId: site.id,
           siteName: site.name,
@@ -158,9 +182,31 @@ class ReelsStore extends ChangeNotifier {
           mediaUrl: v.url,
           pageUrl: site.url,
           kind: MediaKind.video,
-        ),
-    ];
+        );
+    final found = await PageRenderer.shared.captureVideos(
+      site.url,
+      rounds: rounds,
+      cancelled: () => _stopCapture || AppSettings.shared.reelsSource != _loadedSourceOrStream,
+      onFound: (batch) {
+        final s = _streamSource;
+        if (s == null || s != AppSettings.shared.reelsSource) return;
+        final fresh = batch.map(item).toList();
+        _streamed = [..._streamed, ...fresh];
+        // The first video of a fresh load replaces what was shown before.
+        if (_streamFresh) {
+          items = [];
+          _streamFresh = false;
+        }
+        final have = items.map((e) => e.id).toSet();
+        items = [...items, ...fresh.where((e) => !have.contains(e.id))];
+        _loadedSource = s;
+        notifyListeners();
+      },
+    );
+    return found.map(item).toList();
   }
+
+  String get _loadedSourceOrStream => _streamSource ?? _loadedSource;
 
   /// Videos, GIFs, and post links that may hold one, from any site. Post links are treated as
   /// videos so resolving them renders the page until its video shows up. Plain pictures are left out.
@@ -244,7 +290,13 @@ class _ReelsViewState extends State<ReelsView> {
             body = _setup(context);
           } else if (store.items.isEmpty) {
             body = store.loading
-                ? const Center(child: CircularProgressIndicator(color: T.gold))
+                ? Center(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const CircularProgressIndicator(color: T.gold),
+                      const SizedBox(height: 14),
+                      Text('Loading reels…', style: T.text(14, weight: FontWeight.w500, color: T.muted)),
+                    ]),
+                  )
                 : Center(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -402,6 +454,9 @@ class _ReelPageState extends State<ReelPage> {
   bool _failed = false;
   bool _paused = false;
   bool _muted = AppSettings.shared.startMuted;
+  bool _ready = false;
+  final List<StreamSubscription<Object?>> _subs = [];
+  Timer? _giveUp;
 
   @override
   void initState() {
@@ -423,8 +478,28 @@ class _ReelPageState extends State<ReelPage> {
 
   @override
   void dispose() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _giveUp?.cancel();
     _player?.dispose();
     super.dispose();
+  }
+
+  /// Keeps the poster up until the first frame, and shows the error instead of a black screen.
+  void _watch(Player p) {
+    _subs.add(p.stream.width.listen((w) {
+      if (w != null && w > 0 && !_ready && mounted) {
+        _giveUp?.cancel();
+        setState(() => _ready = true);
+      }
+    }));
+    _subs.add(p.stream.error.listen((_) {
+      if (!_ready && mounted) setState(() => _failed = true);
+    }));
+    _giveUp = Timer(const Duration(seconds: 16), () {
+      if (!_ready && mounted) setState(() => _failed = true);
+    });
   }
 
   Future<void> _load() async {
@@ -438,6 +513,7 @@ class _ReelPageState extends State<ReelPage> {
     }
     final p = Player(configuration: const PlayerConfiguration(bufferSize: 16 * 1024 * 1024));
     final v = VideoController(p);
+    _watch(p);
     await p.setPlaylistMode(PlaylistMode.single);
     if (_muted) await p.setVolume(0);
     await p.open(Media(r.url.toString(), httpHeaders: Net.playerHeaders(r.referer)), play: widget.active && !_paused);
@@ -476,8 +552,16 @@ class _ReelPageState extends State<ReelPage> {
     final item = widget.item;
     final r = _resolved;
     Widget media;
-    if (_video != null) {
-      media = Video(controller: _video!, fit: BoxFit.cover, fill: Colors.black, controls: NoVideoControls);
+    if (_video != null && !_failed) {
+      media = Stack(fit: StackFit.expand, children: [
+        Video(controller: _video!, fit: BoxFit.cover, fill: Colors.black, controls: NoVideoControls),
+        // The poster stays on top until the first frame, so a reel is never a black screen.
+        if (!_ready) ...[
+          if (item.thumbnailUrl != null)
+            RemoteImage(url: item.thumbnailUrl, referer: item.referer, fit: BoxFit.cover, placeholder: false, decodeWidth: 600),
+          const Center(child: CircularProgressIndicator(strokeWidth: 2.5, color: T.gold)),
+        ],
+      ]);
     } else if (r != null && r.kind != MediaKind.video) {
       media = RemoteImage(url: r.url, referer: r.referer, fit: BoxFit.contain, placeholder: false, decodeWidth: 900);
     } else {

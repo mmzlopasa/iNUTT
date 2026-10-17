@@ -8,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 import 'core/downloads.dart';
 import 'core/feed_engine.dart';
 import 'core/image_cache.dart';
+import 'core/models.dart';
 import 'core/security.dart';
 import 'core/stores.dart';
 import 'screens/home.dart';
@@ -195,6 +196,35 @@ class FloatingTabBar extends StatelessWidget {
   final AppRouter router;
   const FloatingTabBar({super.key, required this.router});
 
+  /// Long-press (or right-click) on Home: jump straight to Images, Videos or GIFs.
+  Future<void> _homeMenu(BuildContext ctx) async {
+    HapticFeedback.mediumImpact();
+    final box = ctx.findRenderObject() as RenderBox?;
+    final overlay = Overlay.of(ctx).context.findRenderObject() as RenderBox?;
+    if (box == null || overlay == null) return;
+    final topLeft = box.localToGlobal(Offset.zero, ancestor: overlay);
+    const height = 4 * 48.0 + 16;
+    final rect = RelativeRect.fromLTRB(topLeft.dx, topLeft.dy - height - 8, overlay.size.width - topLeft.dx - box.size.width, 0);
+    PopupMenuItem<int> item(int v, IconData icon, String title) => PopupMenuItem<int>(
+          value: v,
+          child: Row(children: [Icon(icon, size: 20, color: T.gold), const SizedBox(width: 12), Text(title, style: T.text(15, color: T.ink))]),
+        );
+    final picked = await showMenu<int>(
+      context: ctx,
+      position: rect,
+      color: T.navy,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: T.edge)),
+      items: [
+        item(-1, Icons.auto_awesome_rounded, 'All'),
+        item(MediaKind.image.index, Icons.photo_rounded, 'Images'),
+        item(MediaKind.video.index, Icons.play_circle_rounded, 'Videos'),
+        item(MediaKind.gif.index, Icons.gif_box_rounded, 'GIFs'),
+      ],
+    );
+    if (picked == null) return;
+    router.showHomeKind(picked < 0 ? null : MediaKind.values[picked]);
+  }
+
   @override
   Widget build(BuildContext context) => Center(
         child: ConstrainedBox(
@@ -213,11 +243,16 @@ class FloatingTabBar extends StatelessWidget {
                   child: Row(children: [
                     for (final t in AppTab.values)
                       Expanded(
-                        child: Pressable(
+                        child: Builder(builder: (ctx) {
+                          void menu() => t == AppTab.home ? _homeMenu(ctx) : null;
+                          return GestureDetector(
+                            onSecondaryTap: menu,
+                            child: Pressable(
                           onTap: () {
                             HapticFeedback.lightImpact();
                             router.select(t);
                           },
+                          onLongPress: t == AppTab.home ? menu : null,
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 280),
                             curve: Curves.easeOutCubic,
@@ -238,7 +273,9 @@ class FloatingTabBar extends StatelessWidget {
                                   style: T.text(10, weight: FontWeight.w500, color: router.tab == t ? T.onGold : T.muted)),
                             ]),
                           ),
-                        ),
+                            ),
+                          );
+                        }),
                       ),
                   ]),
                 ),
