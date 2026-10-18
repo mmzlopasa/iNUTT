@@ -42,6 +42,13 @@ final class ForumStore: ObservableObject {
         save()
     }
 
+    /// Used by sync: the merged list of forums from all your devices.
+    func replaceAll(_ list: [Forum]) {
+        guard list.map(\.id) != forums.map(\.id) else { return }
+        forums = list
+        save()
+    }
+
     private func save() { Disk.save(forums, "forums.json") }
 }
 

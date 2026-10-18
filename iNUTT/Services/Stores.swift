@@ -74,6 +74,13 @@ final class SiteStore: ObservableObject {
         persist()
     }
 
+    /// Used by sync: the merged list of sites from all your devices.
+    func replaceAll(_ list: [Site]) {
+        guard list.map(\.id) != sites.map(\.id) else { return }
+        sites = list
+        persist()
+    }
+
     private func persist() { Disk.save(sites, "sites.json") }
 
     static func normalize(_ raw: String) -> URL? {

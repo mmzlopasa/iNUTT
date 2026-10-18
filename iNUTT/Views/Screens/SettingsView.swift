@@ -636,9 +636,48 @@ struct SyncSettingsView: View {
     @ObservedObject private var sync = SyncManager.shared
     @State private var picking = false
     @State private var passphrase = ""
+    @State private var repo = SyncManager.shared.githubRepo ?? ""
+    @State private var token = ""
+    @State private var connecting = false
+    @State private var githubError: String?
 
     var body: some View {
         List {
+            Section {
+                TextField("owner/repository", text: $repo)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                SecureField(sync.githubRepo != nil ? "Token is saved" : "GitHub token", text: $token)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button {
+                    connecting = true
+                    githubError = nil
+                    Task {
+                        githubError = await sync.connectGitHub(repo: repo, token: token)
+                        connecting = false
+                        if githubError == nil {
+                            token = ""
+                            await sync.sync()
+                        }
+                    }
+                } label: {
+                    Label(connecting ? "Checking…" : (sync.githubRepo != nil ? "Connected · update" : "Connect GitHub"),
+                          systemImage: sync.githubRepo != nil ? "checkmark.seal.fill" : "link")
+                }
+                .disabled(connecting || repo.isEmpty || token.trimmingCharacters(in: .whitespaces).isEmpty)
+                if let e = githubError {
+                    Text(e).font(Theme.text(13)).foregroundStyle(Theme.err)
+                }
+            } header: {
+                Text("GitHub (recommended)")
+            } footer: {
+                Text("Make a private repository on github.com, then a fine-grained token (Settings › Developer settings › Personal access tokens) with access to only that repository and Contents: Read and write. Use the same repository, token and passphrase on every device.")
+                    .font(Theme.text(12)).foregroundStyle(Theme.muted)
+            }
+            .listRowBackground(Theme.navy.opacity(0.6))
+
             Section {
                 Button { picking = true } label: {
                     HStack {
@@ -647,6 +686,15 @@ struct SyncSettingsView: View {
                         Text(sync.folderName ?? "Choose…").foregroundStyle(Theme.muted)
                     }
                 }
+            } header: {
+                Text("Or a folder")
+            } footer: {
+                Text("A folder in iCloud Drive or Google Drive (Files app). Picking a folder stops GitHub sync, and connecting GitHub stops the folder.")
+                    .font(Theme.text(12)).foregroundStyle(Theme.muted)
+            }
+            .listRowBackground(Theme.navy.opacity(0.6))
+
+            Section {
                 HStack {
                     SecureField(sync.hasPassphrase ? "Passphrase is set" : "Sync passphrase", text: $passphrase)
                         .textInputAutocapitalization(.never)
@@ -659,7 +707,7 @@ struct SyncSettingsView: View {
                     .disabled(passphrase.trimmingCharacters(in: .whitespaces).count < 6)
                 }
             } footer: {
-                Text("Choose a folder in iCloud Drive or Google Drive (Files app), then on your other iPhone, Android or Windows device pick the same folder with the same passphrase. Favorites, collections and Watch later are merged; removing something removes it everywhere. The file is encrypted with the passphrase, which must be at least 6 characters and is never uploaded.")
+                Text("Sites, forums, favorites, collections and Watch later are saved a moment after you change them and merged with your other iPhone, Android and Windows devices; removing something removes it everywhere. Other devices' changes arrive within a minute while the app is open. The file is encrypted with the passphrase (at least 6 characters), which never leaves your devices.")
                     .font(Theme.text(12)).foregroundStyle(Theme.muted)
             }
             .listRowBackground(Theme.navy.opacity(0.6))
@@ -680,8 +728,11 @@ struct SyncSettingsView: View {
                 if let s = sync.status {
                     Text(s).font(Theme.text(13)).foregroundStyle(Theme.err)
                 }
-                if sync.folderName != nil {
-                    Button(role: .destructive) { sync.stop() } label: { Label("Stop syncing", systemImage: "xmark.circle") }
+                if sync.placeName != nil {
+                    Button(role: .destructive) {
+                        sync.stop()
+                        repo = ""
+                    } label: { Label("Stop syncing", systemImage: "xmark.circle") }
                 }
             }
             .listRowBackground(Theme.navy.opacity(0.6))
