@@ -744,7 +744,7 @@ class _SyncSettingsViewState extends State<SyncSettingsView> {
             const SizedBox(height: 8),
             Section(
               title: 'Status',
-              footer: m.status,
+              footer: m.status ?? m.missingStep,
               children: [
                 Row2(
                   icon: Icons.sync_rounded,

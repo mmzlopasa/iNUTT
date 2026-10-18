@@ -248,6 +248,14 @@ class SyncManager extends ChangeNotifier {
   bool get _hasPlace => location != null || (githubRepo != null && (_githubToken ?? '').isNotEmpty);
   bool get isConfigured => _hasPlace && hasPassphrase && !Disk.readOnly;
 
+  /// What still has to be done before sync can run, for the settings screen.
+  String? get missingStep => switch ((_hasPlace, hasPassphrase)) {
+    (false, false) => 'Sync is off: connect GitHub (or pick a folder) and save a passphrase.',
+    (false, true) => 'Sync is off: connect GitHub (or pick a folder).',
+    (true, false) => 'Sync is off: type a passphrase of at least 6 characters and tap Save.',
+    _ => null,
+  };
+
   /// Where the file is kept, for the settings screen.
   String? get placeName => githubRepo != null ? 'GitHub · $githubRepo' : locationName;
 

@@ -725,6 +725,9 @@ struct SyncSettingsView: View {
                     }
                 }
                 .disabled(!sync.isConfigured || sync.syncing)
+                if let missing = sync.missingStep {
+                    Text(missing).font(Theme.text(13)).foregroundStyle(Theme.gold)
+                }
                 if let s = sync.status {
                     Text(s).font(Theme.text(13)).foregroundStyle(Theme.err)
                 }

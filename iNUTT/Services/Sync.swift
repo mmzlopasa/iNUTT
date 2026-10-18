@@ -100,6 +100,16 @@ final class SyncManager: ObservableObject {
     private var hasPlace: Bool { d.data(forKey: "syncFolder") != nil || (githubRepo != nil && githubToken != nil) }
     var isConfigured: Bool { hasPlace && hasPassphrase }
     var hasPassphrase: Bool { !(Keychain.get("syncPassphrase") ?? "").isEmpty }
+    /// What still has to be done before sync can run, for the settings screen.
+    var missingStep: String? {
+        switch (hasPlace, hasPassphrase) {
+        case (false, false): return "Sync is off: connect GitHub (or pick a folder) and save a passphrase."
+        case (false, true): return "Sync is off: connect GitHub (or pick a folder)."
+        case (true, false): return "Sync is off: type a passphrase of at least 6 characters and tap Save."
+        default: return nil
+        }
+    }
+
     /// Where the file is kept, for the settings screen.
     var placeName: String? { githubRepo.map { "GitHub · " + $0 } ?? folderName }
 
