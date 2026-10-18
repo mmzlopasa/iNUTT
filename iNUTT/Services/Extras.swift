@@ -68,6 +68,13 @@ final class ResumeStore: ObservableObject {
         changed()
     }
 
+    /// Used by sync: resume points as merged with your other devices.
+    func replaceAll(_ list: [String: ResumePoint]) {
+        guard list != points else { return }
+        points = list
+        changed()
+    }
+
     /// Screens under the viewer catch up once it closes.
     func flush() {
         guard pending else { return }
@@ -436,6 +443,14 @@ final class Taste: ObservableObject {
             return s > 0 ? (i, s) : nil
         }
         return scored.sorted { $0.1 > $1.1 }.prefix(limit).map(\.0)
+    }
+
+    /// Used by sync: what was learned on your other devices.
+    func replace(weights w: [String: Double], signals s: Int) {
+        guard w != weights || s != signals else { return }
+        weights = w
+        signals = s
+        Disk.save(Saved(weights: w, signals: s), "taste.json")
     }
 
     func reset() {

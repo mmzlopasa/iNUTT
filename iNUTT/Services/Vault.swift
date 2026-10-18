@@ -10,6 +10,10 @@ struct VaultEntry: Codable, Identifiable, Hashable {
     var size: Int64
     var thumbnailURL: URL?
     var addedAt = Date()
+    /// The same file's name on every device, set when it came from another device through sync.
+    var syncID: String?
+
+    var syncKey: String { syncID ?? id.uuidString }
 }
 
 /// Downloads kept inside the app, encrypted with a key that never leaves this device's keychain.
@@ -69,6 +73,19 @@ final class Vault: ObservableObject {
         if FileManager.default.fileExists(atPath: out.path) { return out }
         try await Task.detached(priority: .userInitiated) { try Self.unseal(src, to: out) }.value
         return out
+    }
+
+    /// Used by sync: a file that came from another device, already decrypted to `file`.
+    func add(file: URL, entry: VaultEntry) async throws {
+        var e = entry
+        let dest = Self.dir.appendingPathComponent(e.id.uuidString)
+        e.size = try await Task.detached(priority: .utility) {
+            defer { try? FileManager.default.removeItem(at: file) }
+            return try Self.seal(file, to: dest)
+        }.value
+        entries.append(e)
+        entries.sort { $0.addedAt > $1.addedAt }
+        save()
     }
 
     func delete(_ e: VaultEntry) {

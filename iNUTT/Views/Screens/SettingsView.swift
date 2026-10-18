@@ -707,7 +707,7 @@ struct SyncSettingsView: View {
                     .disabled(passphrase.trimmingCharacters(in: .whitespaces).count < 6)
                 }
             } footer: {
-                Text("Sites, forums, favorites, collections and Watch later are saved a moment after you change them and merged with your other iPhone, Android and Windows devices; removing something removes it everywhere. Other devices' changes arrive within a minute while the app is open. The file is encrypted with the passphrase (at least 6 characters), which never leaves your devices.")
+                Text("Everything is synced: sites, forums, favorites, collections, Watch later, history, searches, blocked words, Continue watching, Picked for you and settings (lock settings stay per device), plus the vault when you use GitHub. Changes go out a moment after you make them (history within half a minute) and merge with your other iPhone, Android and Windows devices; removing something removes it everywhere. Other devices' changes arrive within a minute while the app is open. Everything is encrypted with the passphrase (at least 6 characters), which never leaves your devices.")
                     .font(Theme.text(12)).foregroundStyle(Theme.muted)
             }
             .listRowBackground(Theme.navy.opacity(0.6))
@@ -717,7 +717,7 @@ struct SyncSettingsView: View {
                     Task { await sync.sync() }
                 } label: {
                     HStack {
-                        Label(sync.syncing ? "Syncing…" : "Sync now", systemImage: "arrow.triangle.2.circlepath")
+                        Label(sync.syncing ? (sync.progress ?? "Syncing…") : "Sync now", systemImage: "arrow.triangle.2.circlepath")
                         Spacer()
                         if let d = sync.lastSync {
                             Text(d, style: .relative).foregroundStyle(Theme.muted)

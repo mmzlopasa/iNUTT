@@ -206,6 +206,14 @@ final class Library: ObservableObject {
         historyChanged()
     }
 
+    /// Used by sync: history as merged with your other devices.
+    func replaceHistory(_ list: [HistoryEntry]) {
+        guard list.map(\.item.id) != history.map(\.item.id) || list.first?.viewedAt != history.first?.viewedAt else { return }
+        history = list
+        SeenMarks.shared.ids = Set(list.map(\.item.id))
+        historyChanged()
+    }
+
     /// Used by sync: the list as merged with your other devices.
     func replaceFavorites(_ items: [MediaItem]) {
         guard items.map(\.id) != favorites.map(\.id) else { return }
