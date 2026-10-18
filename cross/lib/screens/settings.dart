@@ -587,11 +587,34 @@ class SyncSettingsView extends StatefulWidget {
 
 class _SyncSettingsViewState extends State<SyncSettingsView> {
   final _pass = TextEditingController();
+  final _repo = TextEditingController(text: SyncManager.shared.githubRepo ?? '');
+  final _token = TextEditingController();
+  bool _connecting = false;
+  String? _githubError;
 
   @override
   void dispose() {
     _pass.dispose();
+    _repo.dispose();
+    _token.dispose();
     super.dispose();
+  }
+
+  Future<void> _connect() async {
+    setState(() {
+      _connecting = true;
+      _githubError = null;
+    });
+    final e = await SyncManager.shared.connectGitHub(_repo.text, _token.text);
+    if (!mounted) return;
+    setState(() {
+      _connecting = false;
+      _githubError = e;
+    });
+    if (e == null) {
+      _token.clear();
+      unawaited(SyncManager.shared.sync());
+    }
   }
 
   Future<void> _pickWindows() async {
@@ -628,7 +651,50 @@ class _SyncSettingsViewState extends State<SyncSettingsView> {
           padding: const EdgeInsets.all(16),
           children: [
             Section(
-              title: 'Where',
+              title: 'GitHub (recommended)',
+              footer:
+                  _githubError ??
+                  'Make a private repository on github.com, then a fine-grained token (Settings › Developer settings › Personal access '
+                      'tokens) with access to only that repository and Contents: Read and write. Use the same repository, token and '
+                      'passphrase on every device.',
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: TextField(
+                    controller: _repo,
+                    autocorrect: false,
+                    style: T.text(15, color: T.ink),
+                    decoration: const InputDecoration(hintText: 'owner/repository'),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _token,
+                          obscureText: true,
+                          autocorrect: false,
+                          style: T.text(15, color: T.ink),
+                          decoration: InputDecoration(hintText: m.githubRepo != null ? 'Token is saved' : 'GitHub token'),
+                          onSubmitted: (_) => _connect(),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      GoldButton(
+                        label: _connecting ? 'Checking…' : (m.githubRepo != null ? 'Update' : 'Connect'),
+                        onPressed: _connecting ? null : _connect,
+                      ),
+                    ],
+                  ),
+                ),
+                if (m.githubRepo != null) Row2(icon: Icons.verified_rounded, title: 'Connected', value: m.githubRepo),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Section(
+              title: 'Or a file in a cloud folder',
               footer: Platform.isAndroid
                   ? 'On your first device choose "New sync file" and save it in Google Drive (or another cloud app). On your other devices '
                         'choose "Use existing file" and pick that same file. On iPhone pick the folder it is in; on Windows the synced folder.'
@@ -648,8 +714,10 @@ class _SyncSettingsViewState extends State<SyncSettingsView> {
             Section(
               title: 'Passphrase',
               footer:
-                  'Favorites, collections and Watch later are merged; removing something removes it everywhere. The file is encrypted '
-                  'with this passphrase (at least 6 characters), which must be the same on every device and is never uploaded.',
+                  'Sites, forums, favorites, collections and Watch later are saved a moment after you change them and merged with your '
+                  'other devices; removing something removes it everywhere. Other devices\' changes arrive within a minute while the app '
+                  'is open. The file is encrypted with this passphrase (at least 6 characters), which must be the same on every device '
+                  'and never leaves them.',
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -682,7 +750,16 @@ class _SyncSettingsViewState extends State<SyncSettingsView> {
                   value: last == null ? 'Never' : '${last.hour.toString().padLeft(2, '0')}:${last.minute.toString().padLeft(2, '0')}',
                   onTap: m.isConfigured && !m.syncing ? m.sync : null,
                 ),
-                if (m.location != null) Row2(icon: Icons.cloud_off_rounded, title: 'Stop syncing', tint: T.err, onTap: m.stop),
+                if (m.placeName != null)
+                  Row2(
+                    icon: Icons.cloud_off_rounded,
+                    title: 'Stop syncing',
+                    tint: T.err,
+                    onTap: () {
+                      m.stop();
+                      _repo.clear();
+                    },
+                  ),
               ],
             ),
           ],

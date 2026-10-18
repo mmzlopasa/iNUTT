@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
@@ -63,6 +64,13 @@ class ForumStore extends ChangeNotifier {
 
   void remove(Forum f) {
     forums.removeWhere((e) => e.id == f.id);
+    _save();
+  }
+
+  /// Used by sync: the merged list of forums from all your devices.
+  void replaceAll(List<Forum> list) {
+    if (listEquals(list.map((e) => e.id).toList(), forums.map((e) => e.id).toList())) return;
+    forums = list;
     _save();
   }
 

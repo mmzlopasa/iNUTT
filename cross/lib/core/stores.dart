@@ -115,6 +115,13 @@ class SiteStore extends ChangeNotifier {
     _save();
   }
 
+  /// Used by sync: the merged list of sites from all your devices.
+  void replaceAll(List<Site> list) {
+    if (listEquals(list.map((e) => e.id).toList(), sites.map((e) => e.id).toList())) return;
+    sites = list;
+    _save();
+  }
+
   void move(int from, int to) {
     final s = sites.removeAt(from);
     sites.insert(to > from ? to - 1 : to, s);
