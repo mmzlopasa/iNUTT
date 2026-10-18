@@ -189,9 +189,51 @@ enum SiteAdapters {
     private static let anonymousID = UUID().uuidString.lowercased()
 
     static func fikfapFeed(site: Site, after: String?) async throws -> ScrapeResult {
-        var comps = URLComponents(string: "https://api.fikfap.com/posts")!
-        comps.queryItems = [URLQueryItem(name: "amount", value: "21")] + (after.map { [URLQueryItem(name: "afterId", value: $0)] } ?? [])
-        var req = URLRequest(url: comps.url!, cachePolicy: .reloadIgnoringLocalCacheData)
+        let (items, lastID) = try await fikfapPosts(path: "/posts", query: [:], after: after, site: site)
+        var result = ScrapeResult()
+        result.items = items
+        if let lastID, var next = URLComponents(url: site.url, resolvingAgainstBaseURL: false) {
+            next.queryItems = [URLQueryItem(name: "inuttAfter", value: lastID)]
+            result.nextPage = next.url
+        }
+        return result
+    }
+
+    /// The API's address for one hashtag's videos isn't documented, so the known shapes are tried in
+    /// turn; only videos that really carry the hashtag count, so a wrong guess never shows other videos.
+    private static let fikfapTagRoutes: [(String) -> (path: String, query: [String: String])] = [
+        { ("/hashtags/label/\($0)/posts", [:]) },
+        { ("/hashtags/\($0)/posts", [:]) },
+        { ("/posts/hashtag/\($0)", [:]) },
+        { ("/posts", ["hashtag": $0]) },
+        { ("/posts", ["hashtags": $0]) },
+    ]
+    private static var fikfapTagRoute: Int?
+
+    /// Videos with one hashtag. `after` pages on; the second value is the cursor for the next page.
+    static func fikfapTagFeed(_ tag: String, site: Site, after: String?) async throws -> ([MediaItem], String?) {
+        let key = tag.lowercased()
+        let enc = tag.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? tag
+        let order = fikfapTagRoute.map { [$0] } ?? Array(fikfapTagRoutes.indices)
+        for i in order {
+            let route = fikfapTagRoutes[i](enc)
+            guard let page = try? await fikfapPosts(path: route.path, query: route.query, after: after, site: site) else { continue }
+            let (items, last) = page
+            let matching = items.filter { ($0.tags ?? []).contains { $0.lowercased() == key } }
+            if matching.isEmpty && after == nil { continue }
+            fikfapTagRoute = i
+            return (matching, matching.isEmpty ? nil : last)
+        }
+        throw NetError.empty
+    }
+
+    private static func fikfapPosts(path: String, query: [String: String], after: String?, site: Site) async throws -> ([MediaItem], String?) {
+        var comps = URLComponents(string: "https://api.fikfap.com")!
+        comps.percentEncodedPath = path
+        comps.queryItems = [URLQueryItem(name: "amount", value: "21")] + query.map { URLQueryItem(name: $0.key, value: $0.value) }
+            + (after.map { [URLQueryItem(name: "afterId", value: $0)] } ?? [])
+        guard let url = comps.url else { throw NetError.empty }
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         req.setValue(Net.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("https://fikfap.com", forHTTPHeaderField: "Origin")
@@ -201,8 +243,11 @@ enum SiteAdapters {
         req.setValue("false", forHTTPHeaderField: "IsPWA")
         let (data, resp) = try await Net.session.data(for: req)
         if let code = (resp as? HTTPURLResponse)?.statusCode, code >= 400 { throw NetError.badStatus(code) }
-        guard let posts = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], !posts.isEmpty else { throw NetError.empty }
-        var result = ScrapeResult()
+        let json = try? JSONSerialization.jsonObject(with: data)
+        let posts = (json as? [[String: Any]])
+            ?? ((json as? [String: Any]).flatMap { ($0["posts"] ?? $0["data"] ?? $0["items"]) as? [[String: Any]] })
+            ?? []
+        var items: [MediaItem] = []
         var lastID: String?
         for p in posts {
             guard let s = p["videoStreamUrl"] as? String, let v = URL(string: s) else { continue }
@@ -214,14 +259,10 @@ enum SiteAdapters {
             item.id = MediaItem.hash(v.absoluteString)
             let tags = fikfapTags(p)
             if !tags.isEmpty { item.tags = tags }
-            result.items.append(item)
+            items.append(item)
         }
-        if result.items.isEmpty { throw NetError.empty }
-        if let lastID, var next = URLComponents(url: site.url, resolvingAgainstBaseURL: false) {
-            next.queryItems = [URLQueryItem(name: "inuttAfter", value: lastID)]
-            result.nextPage = next.url
-        }
-        return result
+        if items.isEmpty { throw NetError.empty }
+        return (items, lastID)
     }
 
     /// A post's hashtags, as a list of names or of objects with a label or name.

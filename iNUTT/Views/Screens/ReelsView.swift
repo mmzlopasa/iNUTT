@@ -181,6 +181,66 @@ final class ReelsStore: ObservableObject {
         }
     }
 
+    // MARK: Hashtag
+
+    /// While set, Reels plays videos with this hashtag instead of the source's feed.
+    @Published private(set) var tag: String?
+    @Published private(set) var tagItems: [MediaItem] = []
+    @Published private(set) var tagLoading = false
+    /// Where the hashtag's pager is; the source's feed keeps its own place.
+    @Published var tagIndex = 0
+    private var tagAfter: String?
+    private var tagEnded = false
+
+    /// What the pager plays: the hashtag's videos while one is open, else the source's feed.
+    var shown: [MediaItem] { tag == nil ? items : tagItems }
+
+    func openTag(_ t: String) {
+        guard tag?.lowercased() != t.lowercased() else { return }
+        tagIndex = 0
+        ReelsCursor.shared.index = 0
+        tag = t
+        tagAfter = nil
+        tagEnded = false
+        // Videos already loaded with this hashtag play at once; more of it loads behind them.
+        tagItems = Self.withTag(t, in: items + FeedEngine.shared.feeds.values.flatMap { $0 })
+        Task { await loadMoreTag() }
+    }
+
+    func closeTag() {
+        tag = nil
+        tagItems = []
+    }
+
+    func loadMoreTag() async {
+        guard let t = tag, !tagLoading, !tagEnded else { return }
+        guard let site, SiteAdapters.isFikFap(site.url) else {
+            tagEnded = true
+            return
+        }
+        tagLoading = true
+        defer { tagLoading = false }
+        let result = try? await SiteAdapters.fikfapTagFeed(t, site: site, after: tagAfter)
+        guard tag == t else { return }
+        guard let page = result else {
+            tagEnded = true
+            return
+        }
+        let (fresh, after) = page
+        let have = Set(tagItems.map(\.id))
+        tagItems += Blocklist.filter(fresh).filter { !have.contains($0.id) }
+        tagAfter = after
+        if after == nil || fresh.isEmpty { tagEnded = true }
+    }
+
+    static func withTag(_ t: String, in list: [MediaItem]) -> [MediaItem] {
+        let key = t.lowercased()
+        var seen = Set<String>()
+        return Blocklist.filter(list).filter { i in
+            i.kind == .video && i.hashtags.contains { $0.lowercased() == key } && seen.insert(i.id).inserted
+        }
+    }
+
     private func save() {
         Disk.save(Snapshot(source: loadedSource, items: Array(items.prefix(300)), next: next, rounds: captureRounds), "reels.json")
     }
@@ -236,10 +296,25 @@ struct ReelsView: View {
                     }
                     .padding(.horizontal, 16)
                 }
-            } else {
-                ReelsPager(items: store.items, index: $index) {
-                    Task { await store.loadMore() }
+            } else if store.tag != nil && store.tagItems.isEmpty {
+                VStack(spacing: 16) {
+                    if store.tagLoading {
+                        ProgressView().tint(Theme.gold).scaleEffect(1.2)
+                    } else {
+                        EmptyStateView(symbol: "number", title: "#" + (store.tag ?? ""),
+                                       message: "No videos with this hashtag were found.", buttonTitle: "Back to Reels") {
+                            store.closeTag()
+                        }
+                    }
                 }
+                .padding(.horizontal, 16)
+                topBar
+            } else {
+                ReelsPager(items: store.shown, index: store.tag == nil ? $index : $store.tagIndex) {
+                    Task { store.tag == nil ? await store.loadMore() : await store.loadMoreTag() }
+                }
+                // A new pager for a hashtag, so it starts at its first video.
+                .id(store.tag ?? "")
                 .ignoresSafeArea()
                 topBar
             }
@@ -249,7 +324,12 @@ struct ReelsView: View {
         .onChange(of: router.tab) { _ in updateVisible() }
         .onChange(of: lock.isLocked) { _ in updateVisible() }
         .onChange(of: phase) { p in updateVisible(phase: p) }
+        .onChange(of: store.tag) { t in
+            // Back from a hashtag: the feed is where it was left.
+            if t == nil { ReelsCursor.shared.index = index }
+        }
         .onChange(of: settings.reelsSource) { _ in
+            store.closeTag()
             index = 0
             ReelsCursor.shared.index = 0
             Task { await store.loadIfNeeded() }
@@ -265,7 +345,19 @@ struct ReelsView: View {
     private var topBar: some View {
         VStack {
             HStack {
-                Text("Reels").font(Theme.display(20, .bold)).foregroundStyle(.white)
+                if let t = store.tag {
+                    Button { store.closeTag() } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left").font(.system(size: 14, weight: .bold))
+                            Text("#" + t).font(Theme.display(18, .bold)).lineLimit(1)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12).frame(height: 40)
+                        .background(Capsule().fill(.black.opacity(0.35)))
+                    }
+                } else {
+                    Text("Reels").font(Theme.display(20, .bold)).foregroundStyle(.white)
+                }
                 Spacer()
                 Button { draft = settings.reelsSource; showSource = true } label: {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
@@ -494,11 +586,16 @@ struct ReelPage: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
                                 ForEach(tags.prefix(20), id: \.self) { t in
-                                    Text("#" + t)
-                                        .font(Theme.text(13, .semibold))
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 9).frame(height: 24)
-                                        .background(Capsule().fill(Color.white.opacity(0.16)))
+                                    // Opens this hashtag's videos instead of pausing the reel.
+                                    Button { ReelsStore.shared.openTag(t) } label: {
+                                        Text("#" + t)
+                                            .font(Theme.text(13, .semibold))
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 9).frame(height: 24)
+                                            .background(Capsule().fill(Color.white.opacity(0.16)))
+                                            .contentShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }

@@ -222,7 +222,48 @@ class SiteAdapters {
   }
 
   static Future<ScrapeResult> fikfapFeed(Site site, String? after) async {
-    final url = Uri.https('api.fikfap.com', '/posts', {'amount': '21', 'afterId': ?after});
+    final (items, lastId) = await _fikfapPosts('/posts', const {}, after, site);
+    final result = ScrapeResult();
+    result.items.addAll(items);
+    if (lastId != null) result.nextPage = site.url.replace(queryParameters: {'inuttAfter': lastId});
+    return result;
+  }
+
+  /// The API's address for one hashtag's videos isn't documented, so the known shapes are tried in
+  /// turn; only videos that really carry the hashtag count, so a wrong guess never shows other videos.
+  static final List<(String, Map<String, String>) Function(String)> _fikfapTagRoutes = [
+    (t) => ('/hashtags/label/$t/posts', const {}),
+    (t) => ('/hashtags/$t/posts', const {}),
+    (t) => ('/posts/hashtag/$t', const {}),
+    (t) => ('/posts', {'hashtag': t}),
+    (t) => ('/posts', {'hashtags': t}),
+  ];
+  static int? _fikfapTagRoute;
+
+  /// Videos with one hashtag. `after` pages on; the second value is the cursor for the next page.
+  static Future<(List<MediaItem>, String?)> fikfapTagFeed(String tag, Site site, String? after) async {
+    final key = tag.toLowerCase();
+    final enc = Uri.encodeComponent(tag);
+    final order = _fikfapTagRoute != null ? [_fikfapTagRoute!] : List.generate(_fikfapTagRoutes.length, (i) => i);
+    for (final i in order) {
+      final (path, query) = _fikfapTagRoutes[i](enc);
+      final (List<MediaItem>, String?) page;
+      try {
+        page = await _fikfapPosts(path, query, after, site);
+      } catch (_) {
+        continue;
+      }
+      final matching = page.$1.where((e) => (e.tags ?? const []).any((t) => t.toLowerCase() == key)).toList();
+      if (matching.isEmpty && after == null) continue;
+      _fikfapTagRoute = i;
+      return (matching, matching.isEmpty ? null : page.$2);
+    }
+    throw NetException('No videos with #$tag.');
+  }
+
+  static Future<(List<MediaItem>, String?)> _fikfapPosts(String path, Map<String, String> query, String? after, Site site) async {
+    // The path is already encoded; Uri.https would encode it a second time.
+    final url = Uri.parse('https://api.fikfap.com$path').replace(queryParameters: {'amount': '21', ...query, 'afterId': ?after});
     final f = await Net.fetch(
       url,
       headers: {
@@ -234,9 +275,10 @@ class SiteAdapters {
         'IsPWA': 'false',
       },
     );
-    final posts = jsonDecode(f.text);
+    final json = jsonDecode(f.text);
+    final posts = json is List ? json : (json is Map ? (json['posts'] ?? json['data'] ?? json['items']) : null);
     if (posts is! List || posts.isEmpty) throw NetException('The page is empty.');
-    final result = ScrapeResult();
+    final items = <MediaItem>[];
     String? lastId;
     for (final p in posts.whereType<Map>()) {
       final v = Uri.tryParse(p['videoStreamUrl'] as String? ?? '');
@@ -244,7 +286,7 @@ class SiteAdapters {
       final thumb = Uri.tryParse(p['thumbnailStreamUrl'] as String? ?? '');
       final id = p['postId']?.toString();
       if (id != null) lastId = id;
-      result.items.add(
+      items.add(
         MediaItem(
           id: hashKey(v.toString()),
           siteId: site.id,
@@ -258,9 +300,8 @@ class SiteAdapters {
         ),
       );
     }
-    if (result.items.isEmpty) throw NetException('The page is empty.');
-    if (lastId != null) result.nextPage = site.url.replace(queryParameters: {'inuttAfter': lastId});
-    return result;
+    if (items.isEmpty) throw NetException('The page is empty.');
+    return (items, lastId);
   }
 
   static List<String>? _nonEmpty(List<String> l) => l.isEmpty ? null : l;

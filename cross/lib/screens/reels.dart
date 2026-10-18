@@ -11,6 +11,7 @@ import '../core/feed_engine.dart';
 import '../core/models.dart';
 import '../core/net.dart';
 import '../core/security.dart';
+import '../core/site_adapters.dart';
 import '../core/stores.dart';
 import '../ui/remote_image.dart';
 import '../ui/router.dart';
@@ -221,6 +222,70 @@ class ReelsStore extends ChangeNotifier {
         (i..kind = MediaKind.video),
   ];
 
+  // Hashtag
+
+  /// While set, Reels plays videos with this hashtag instead of the source's feed.
+  String? tag;
+  List<MediaItem> tagItems = [];
+  bool tagLoading = false;
+  String? _tagAfter;
+  bool _tagEnded = false;
+
+  /// What the pager plays: the hashtag's videos while one is open, else the source's feed.
+  List<MediaItem> get shown => tag == null ? items : tagItems;
+
+  void openTag(String t) {
+    if (tag?.toLowerCase() == t.toLowerCase()) return;
+    tag = t;
+    _tagAfter = null;
+    _tagEnded = false;
+    // Videos already loaded with this hashtag play at once; more of it loads behind them.
+    tagItems = withTag(t, [...items, for (final l in FeedEngine.shared.feeds.values) ...l]);
+    notifyListeners();
+    unawaited(loadMoreTag());
+  }
+
+  void closeTag() {
+    if (tag == null) return;
+    tag = null;
+    tagItems = [];
+    notifyListeners();
+  }
+
+  Future<void> loadMoreTag() async {
+    final t = tag;
+    if (t == null || tagLoading || _tagEnded) return;
+    final site = this.site;
+    if (site == null || !SiteAdapters.isFikFap(site.url)) {
+      _tagEnded = true;
+      notifyListeners();
+      return;
+    }
+    tagLoading = true;
+    notifyListeners();
+    try {
+      final (fresh, after) = await SiteAdapters.fikfapTagFeed(t, site, _tagAfter);
+      if (tag != t) return;
+      final have = tagItems.map((e) => e.id).toSet();
+      tagItems = [...tagItems, ...Blocklist.filter(fresh).where((e) => !have.contains(e.id))];
+      _tagAfter = after;
+      if (after == null || fresh.isEmpty) _tagEnded = true;
+    } catch (_) {
+      if (tag == t) _tagEnded = true;
+    } finally {
+      tagLoading = false;
+      notifyListeners();
+    }
+  }
+
+  static List<MediaItem> withTag(String t, List<MediaItem> list) {
+    final key = t.toLowerCase();
+    final seen = <String>{};
+    return Blocklist.filter(list)
+        .where((i) => i.kind == MediaKind.video && i.hashtags.any((h) => h.toLowerCase() == key) && seen.add(i.id))
+        .toList();
+  }
+
   void _save() => unawaited(
     Disk.save('reels.json', {
       'source': _loadedSource,
@@ -240,8 +305,13 @@ class ReelsView extends StatefulWidget {
 }
 
 class _ReelsViewState extends State<ReelsView> {
-  final _page = PageController();
+  PageController _page = PageController();
   int _index = 0;
+
+  /// The hashtag's own pager; the feed keeps its place behind it.
+  PageController? _tagPage;
+  int _tagIndex = 0;
+  String? _tagShown;
   String _source = AppSettings.shared.reelsSource;
 
   /// Playing only while the Reels tab is on screen, the app is open and unlocked.
@@ -271,6 +341,7 @@ class _ReelsViewState extends State<ReelsView> {
     appResumed.removeListener(_activityChanged);
     if (_active) Library.shared.releaseUpdates();
     _page.dispose();
+    _tagPage?.dispose();
     super.dispose();
   }
 
@@ -283,9 +354,26 @@ class _ReelsViewState extends State<ReelsView> {
     if (active) unawaited(ReelsStore.shared.loadIfNeeded());
   }
 
+  /// A hashtag opened or closed: switch pagers, the feed coming back where it was left.
+  void _syncTag() {
+    final t = ReelsStore.shared.tag;
+    if (t == _tagShown) return;
+    _tagShown = t;
+    final old = _tagPage;
+    _tagPage = t == null ? null : PageController();
+    _tagIndex = 0;
+    if (t == null) {
+      final feed = _page;
+      _page = PageController(initialPage: _index);
+      WidgetsBinding.instance.addPostFrameCallback((_) => feed.dispose());
+    }
+    if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+  }
+
   void _settingsChanged() {
     if (AppSettings.shared.reelsSource == _source) return;
     _source = AppSettings.shared.reelsSource;
+    ReelsStore.shared.closeTag();
     setState(() => _index = 0);
     if (_page.hasClients) _page.jumpToPage(0);
     unawaited(ReelsStore.shared.loadIfNeeded());
@@ -296,10 +384,32 @@ class _ReelsViewState extends State<ReelsView> {
     listenable: ReelsStore.shared,
     builder: (context, _) {
       final store = ReelsStore.shared;
+      _syncTag();
+      final tag = store.tag;
       Widget body;
       if (store.sourceUrl == null) {
         body = _setup(context);
-      } else if (store.items.isEmpty) {
+      } else if (tag != null && store.tagItems.isEmpty) {
+        body = Stack(
+          children: [
+            Center(
+              child: store.tagLoading
+                  ? const CircularProgressIndicator(color: T.gold)
+                  : Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: EmptyState(
+                        icon: Icons.tag_rounded,
+                        title: '#$tag',
+                        message: 'No videos with this hashtag were found.',
+                        buttonTitle: 'Back to Reels',
+                        onButton: store.closeTag,
+                      ),
+                    ),
+            ),
+            _topBar(context),
+          ],
+        );
+      } else if (tag == null && store.items.isEmpty) {
         body = store.loading
             ? Center(
                 child: Column(
@@ -334,35 +444,44 @@ class _ReelsViewState extends State<ReelsView> {
                 ),
               );
       } else {
+        final list = store.shown;
+        final controller = tag == null ? _page : _tagPage!;
+        final current = tag == null ? _index : _tagIndex;
         body = Stack(
           children: [
             PageView.builder(
-              controller: _page,
+              // A hashtag gets its own pager, starting at its first video.
+              key: ValueKey(tag ?? ''),
+              controller: controller,
               scrollDirection: Axis.vertical,
               allowImplicitScrolling: true,
-              itemCount: store.items.length,
+              itemCount: list.length,
               onPageChanged: (i) {
                 HapticFeedback.selectionClick();
-                setState(() => _index = i);
-                if (i >= store.items.length - 4) unawaited(store.loadMore());
+                setState(() => tag == null ? _index = i : _tagIndex = i);
+                if (i >= list.length - 4) unawaited(tag == null ? store.loadMore() : store.loadMoreTag());
                 // The next page is already built and buffering; find the next few after it too.
                 for (final j in [i + 2, i + 3]) {
-                  if (j < store.items.length) unawaited(FeedEngine.shared.resolve(store.items[j]));
+                  if (j < list.length) unawaited(FeedEngine.shared.resolve(list[j]));
                 }
               },
               itemBuilder: (context, i) {
                 final reel = ReelPage(
-                  key: ValueKey(store.items[i].id),
-                  item: store.items[i],
-                  active: _active && i == _index,
+                  key: ValueKey(list[i].id),
+                  item: list[i],
+                  active: _active && i == current,
                   onEnded: () {
-                    if (!_page.hasClients || i != _index || i + 1 >= store.items.length) return;
-                    _page.nextPage(duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
+                    if (!controller.hasClients || i != current || i + 1 >= list.length) return;
+                    controller.nextPage(duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
                   },
                 );
                 // On a wide window a reel is a tall column in the middle, so the video isn't cropped.
                 final size = MediaQuery.sizeOf(context);
-                return size.width > size.height * 0.8 ? Center(child: AspectRatio(aspectRatio: 9 / 16, child: reel)) : reel;
+                return size.width > size.height * 0.8
+                    ? Center(
+                        child: AspectRatio(aspectRatio: 9 / 16, child: reel),
+                      )
+                    : reel;
               },
             ),
             _topBar(context),
@@ -379,10 +498,36 @@ class _ReelsViewState extends State<ReelsView> {
     right: 16,
     child: Row(
       children: [
-        Text(
-          'Reels',
-          style: T.display(20, weight: FontWeight.w700, color: Colors.white),
-        ),
+        if (ReelsStore.shared.tag case final t?)
+          Flexible(
+            child: GestureDetector(
+              onTap: ReelsStore.shared.closeTag,
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.35), borderRadius: BorderRadius.circular(20)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.chevron_left_rounded, color: Colors.white, size: 22),
+                    Flexible(
+                      child: Text(
+                        '#$t',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: T.display(18, weight: FontWeight.w700, color: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          )
+        else
+          Text(
+            'Reels',
+            style: T.display(20, weight: FontWeight.w700, color: Colors.white),
+          ),
         const Spacer(),
         _RoundButton(icon: Icons.tune_rounded, onTap: () => _editSource(context)),
       ],
@@ -722,7 +867,12 @@ class _ReelPageState extends State<ReelPage> {
                         ),
                         if (_why != null) ...[
                           const SizedBox(height: 6),
-                          Text(_why!, style: T.mono(11, color: T.muted), textAlign: TextAlign.center, maxLines: 3),
+                          Text(
+                            _why!,
+                            style: T.mono(11, color: T.muted),
+                            textAlign: TextAlign.center,
+                            maxLines: 3,
+                          ),
                         ],
                         const SizedBox(height: 14),
                         GhostButton(label: 'Try again', onPressed: _retry),
@@ -791,14 +941,21 @@ class _ReelPageState extends State<ReelPage> {
                                     scrollDirection: Axis.horizontal,
                                     itemCount: tags.length.clamp(0, 20),
                                     separatorBuilder: (_, _) => const SizedBox(width: 6),
-                                    itemBuilder: (_, i) => Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 9),
-                                      alignment: Alignment.center,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withValues(alpha: 0.16),
-                                        borderRadius: BorderRadius.circular(13),
+                                    // Opens this hashtag's videos instead of pausing the reel.
+                                    itemBuilder: (_, i) => GestureDetector(
+                                      onTap: () => ReelsStore.shared.openTag(tags[i]),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 9),
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withValues(alpha: 0.16),
+                                          borderRadius: BorderRadius.circular(13),
+                                        ),
+                                        child: Text(
+                                          '#${tags[i]}',
+                                          style: T.text(13, weight: FontWeight.w600, color: Colors.white),
+                                        ),
                                       ),
-                                      child: Text('#${tags[i]}', style: T.text(13, weight: FontWeight.w600, color: Colors.white)),
                                     ),
                                   ),
                                 ),
