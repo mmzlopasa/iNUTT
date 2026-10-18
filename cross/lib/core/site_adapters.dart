@@ -258,7 +258,26 @@ class SiteAdapters {
       _fikfapTagRoute = i;
       return (matching, matching.isEmpty ? null : page.$2);
     }
-    throw NetException('No videos with #$tag.');
+    return _fikfapScanTag(key, site, after);
+  }
+
+  /// When no hashtag address answers: read a few pages of the main feed and keep that hashtag's videos.
+  static Future<(List<MediaItem>, String?)> _fikfapScanTag(String key, Site site, String? after) async {
+    final found = <MediaItem>[];
+    var cursor = after;
+    for (var i = 0; i < 6; i++) {
+      final (List<MediaItem>, String?) page;
+      try {
+        page = await _fikfapPosts('/posts', const {}, cursor, site);
+      } catch (_) {
+        break;
+      }
+      found.addAll(page.$1.where((e) => (e.tags ?? const []).any((t) => t.toLowerCase() == key)));
+      cursor = page.$2;
+      if (found.length >= 6 || cursor == null) break;
+    }
+    if (found.isEmpty && after == null) throw NetException('No videos with #$key.');
+    return (found, cursor);
   }
 
   static Future<(List<MediaItem>, String?)> _fikfapPosts(String path, Map<String, String> query, String? after, Site site) async {

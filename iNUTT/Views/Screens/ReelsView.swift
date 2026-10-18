@@ -438,17 +438,27 @@ struct ReelsPager: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ pvc: UIPageViewController, context: Context) {
-        context.coordinator.parent = self
+        let c = context.coordinator
+        let before = c.lastCount
+        c.parent = self
+        c.lastCount = items.count
         if pvc.viewControllers?.isEmpty ?? true, items.indices.contains(index) {
-            pvc.setViewControllers([context.coordinator.page(index)], direction: .forward, animated: false)
+            pvc.setViewControllers([c.page(index)], direction: .forward, animated: false)
+        } else if items.count > before, let current = pvc.viewControllers?.first, current.view.tag == before - 1 {
+            // The pager remembers that the last reel had nothing after it; set it again so it asks anew.
+            pvc.setViewControllers([current], direction: .forward, animated: false)
         }
     }
 
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
         var parent: ReelsPager
+        var lastCount: Int
         weak var pvc: UIPageViewController?
         private var advanceSub: AnyCancellable?
-        init(_ p: ReelsPager) { parent = p }
+        init(_ p: ReelsPager) {
+            parent = p
+            lastCount = p.items.count
+        }
 
         /// Slides to the next reel when the one on screen ended (auto-scroll setting).
         @MainActor

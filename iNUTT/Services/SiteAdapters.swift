@@ -224,7 +224,21 @@ enum SiteAdapters {
             fikfapTagRoute = i
             return (matching, matching.isEmpty ? nil : last)
         }
-        throw NetError.empty
+        return try await fikfapScanTag(key, site: site, after: after)
+    }
+
+    /// When no hashtag address answers: read a few pages of the main feed and keep that hashtag's videos.
+    private static func fikfapScanTag(_ key: String, site: Site, after: String?) async throws -> ([MediaItem], String?) {
+        var found: [MediaItem] = []
+        var cursor = after
+        for _ in 0..<6 {
+            guard let page = try? await fikfapPosts(path: "/posts", query: [:], after: cursor, site: site) else { break }
+            found += page.0.filter { ($0.tags ?? []).contains { $0.lowercased() == key } }
+            cursor = page.1
+            if found.count >= 6 || cursor == nil { break }
+        }
+        if found.isEmpty && after == nil { throw NetError.empty }
+        return (found, cursor)
     }
 
     private static func fikfapPosts(path: String, query: [String: String], after: String?, site: Site) async throws -> ([MediaItem], String?) {
