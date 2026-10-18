@@ -1,0 +1,5 @@
+iNUTT.xcodeproj/
+build/
+out/
+.DS_Store
+iNUTT/Info.plist

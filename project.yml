@@ -1,0 +1,79 @@
+name: iNUTT
+options:
+  bundleIdPrefix: dev.scyde
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+targets:
+  iNUTT:
+    type: application
+    platform: iOS
+    sources:
+      - path: iNUTT
+    info:
+      path: iNUTT/Info.plist
+      properties:
+        CFBundleDisplayName: iNUTT
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIUserInterfaceStyle: Dark
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsArbitraryLoadsForMedia: true
+          NSAllowsArbitraryLoadsInWebContent: true
+        NSFaceIDUsageDescription: iNUTT uses Face ID to unlock the app.
+        NSPhotoLibraryAddUsageDescription: iNUTT saves downloaded images, GIFs and videos to Photos.
+        UIBackgroundModes:
+          - fetch
+          - processing
+          - audio
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.scyde.inutt.refresh
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        ITSAppUsesNonExemptEncryption: false
+        CADisableMinimumFrameDurationOnPhone: true
+        UIAppFonts:
+          - Sora-Regular.ttf
+          - Sora-SemiBold.ttf
+          - Sora-Bold.ttf
+          - Geist-Regular.ttf
+          - Geist-Medium.ttf
+          - Geist-SemiBold.ttf
+          - GeistMono-Medium.ttf
+          - Doto-Bold.ttf
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.scyde.inutt
+        PRODUCT_NAME: iNUTT
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: "NO"
+        ENABLE_BITCODE: "NO"
+        SWIFT_OPTIMIZATION_LEVEL: "-O"

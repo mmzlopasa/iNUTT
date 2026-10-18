@@ -1,0 +1,738 @@
+import SwiftUI
+import AVKit
+
+struct MediaViewer: View {
+    let items: [MediaItem]
+    @State private var index: Int
+    @State private var chrome = true
+    @State private var zoomed = false
+    @State private var dragY: CGFloat = 0
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var downloads: DownloadManager
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var viewer: ViewerState
+    @State private var browser: BrowserTarget?
+    @ObservedObject private var collections = CollectionStore.shared
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var pickCollection = false
+    @State private var newCollection = false
+    @State private var newName = ""
+    @State private var slideshow = false
+    @State private var slideTask: Task<Void, Never>?
+    @State private var rate: Float = 1
+    @State private var loopA: Double?
+    @State private var loopB: Double?
+    @State private var loopTask: Task<Void, Never>?
+    @ObservedObject private var later = WatchLater.shared
+    @State private var showSimilar = false
+    @State private var nested: ViewerPresentation?
+    /// Pictures looked at here; they leave Watch later when the viewer closes.
+    @State private var looked = Set<String>()
+
+    init(items: [MediaItem], startIndex: Int) {
+        self.items = items
+        _index = State(initialValue: startIndex)
+    }
+
+    private var current: MediaItem { items[min(max(index, 0), items.count - 1)] }
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .opacity(1 - min(Double(abs(dragY)) / 500.0, 0.7))
+                .ignoresSafeArea()
+                .sheet(isPresented: $showSimilar) {
+                    SimilarSheet(item: current) { list, i in
+                        showSimilar = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { nested = ViewerPresentation(items: list, index: i) }
+                    }
+                }
+
+            TabView(selection: $index) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                    MediaPage(item: item, isActive: i == index, isZoomed: $zoomed, onTap: toggleChrome)
+                        .tag(i)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
+            .offset(y: dragY)
+            .scaleEffect(1 - min(abs(dragY) / CGFloat(2000), CGFloat(0.12)))
+            .simultaneousGesture(dismissDrag)
+            .fullScreenCover(item: $nested) { p in
+                MediaViewer(items: p.items, startIndex: p.index)
+                    .environmentObject(library)
+                    .environmentObject(downloads)
+                    .environmentObject(viewer)
+                    .environmentObject(AppSettings.shared)
+            }
+
+            if chrome {
+                VStack(spacing: 0) {
+                    topBar
+                    Spacer()
+                    bottomBar
+                }
+                .transition(.opacity)
+            }
+
+            if let t = downloads.toast {
+                VStack {
+                    ToastView(toast: t).padding(.top, 60)
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: chrome)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: downloads.toast)
+        .fullScreenCover(item: $browser) { t in WebBrowserView(target: t) }
+        .statusBarHidden(!chrome)
+        .persistentSystemOverlays(chrome ? .automatic : .hidden)
+        .onAppear {
+            library.holdUpdates()
+            library.record(current)
+            markLooked()
+            Preloader.shared.preload(around: index, in: items)
+        }
+        .onDisappear {
+            WatchLater.shared.remove(ids: looked)
+            library.releaseUpdates()
+            slideTask?.cancel()
+            loopTask?.cancel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { n in
+            guard slideshow, let p = Preloader.shared.existing(current.id), (n.object as? AVPlayerItem) === p.currentItem else { return }
+            advance()
+        }
+        .confirmationDialog("Add to collection", isPresented: $pickCollection, titleVisibility: .visible) {
+            ForEach(collections.collections) { c in
+                Button((collections.contains(current, in: c.id) ? "✓ " : "") + c.name) {
+                    let added = collections.toggle(current, in: c.id)
+                    downloads.show(added ? "Added to \(c.name)" : "Removed from \(c.name)", symbol: "folder.fill")
+                }
+            }
+            Button("New collection…") { newName = ""; newCollection = true }
+        }
+        .alert("New collection", isPresented: $newCollection) {
+            TextField("Name", text: $newName)
+            Button("Create") {
+                if let c = collections.create(newName, with: current) {
+                    downloads.show("Added to \(c.name)", symbol: "folder.fill")
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: index) { i in
+            zoomed = false
+            clearLoop()
+            rate = 1
+            library.record(current)
+            markLooked()
+            Preloader.shared.preload(around: i, in: items)
+            UISelectionFeedbackGenerator().selectionChanged()
+        }
+    }
+
+    private func toggleChrome() { chrome.toggle() }
+
+    private func markLooked() {
+        if !isVideo && later.contains(current) { looked.insert(current.id) }
+    }
+
+    private var dismissDrag: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onChanged { v in
+                guard !zoomed, abs(v.translation.height) > abs(v.translation.width) * 1.4 else { return }
+                dragY = v.translation.height
+            }
+            .onEnded { v in
+                if abs(dragY) > 140 || abs(v.predictedEndTranslation.height) > 500 && dragY != 0 {
+                    dismiss()
+                } else {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { dragY = 0 }
+                }
+            }
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(.ultraThinMaterial))
+                    .overlay(Circle().strokeBorder(Theme.edge, lineWidth: 0.8))
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(current.siteName).font(Theme.display(14, .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+                if let c = current.categoryName {
+                    Text(c).font(Theme.mono(10)).foregroundStyle(Theme.gold).lineLimit(1)
+                }
+            }
+            Spacer()
+            Button { showSimilar = true } label: {
+                Image(systemName: "rectangle.stack.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(.ultraThinMaterial))
+                    .overlay(Circle().strokeBorder(Theme.edge, lineWidth: 0.8))
+            }
+            .accessibilityLabel("Similar")
+            Button { toggleSlideshow() } label: {
+                Image(systemName: slideshow ? "pause.fill" : "play.square.stack.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(slideshow ? Theme.onGold : Theme.ink)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(slideshow ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(.ultraThinMaterial)))
+                    .overlay(Circle().strokeBorder(Theme.edge, lineWidth: 0.8))
+            }
+            .accessibilityLabel("Slideshow")
+            Text("\(index + 1) / \(items.count)")
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.body)
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(Capsule().fill(.ultraThinMaterial))
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .background(
+            LinearGradient(colors: [.black.opacity(0.6), .clear], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        )
+    }
+
+    private var bottomBar: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 8) {
+                KindBadge(item: current)
+                if !current.title.isEmpty {
+                    Text(current.title)
+                        .font(Theme.text(15, .medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(3)
+                }
+            }
+            if isVideo { videoControls }
+            HStack(spacing: 12) {
+                Spacer()
+                actionButton(later.contains(current) ? "clock.fill" : "clock", active: later.contains(current)) {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    let on = !later.contains(current)
+                    later.toggle(current)
+                    later.flush()
+                    downloads.show(on ? "Added to Watch later" : "Removed from Watch later", symbol: "clock.fill")
+                }
+                actionButton("folder.badge.plus", active: collections.collections.contains { $0.items.contains { $0.id == current.id } }) {
+                    pickCollection = true
+                }
+                actionButton(library.isFavorite(current) ? "heart.fill" : "heart", active: library.isFavorite(current)) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    library.toggleFavorite(current)
+                }
+                ZStack {
+                    actionButton("arrow.down.to.line", active: false) {
+                        let item = current
+                        Task { await downloads.download(item) }
+                    }
+                    if let p = downloads.progress[current.id] {
+                        Circle()
+                            .trim(from: 0, to: max(0.03, p))
+                            .stroke(Theme.gold, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .frame(width: 46, height: 46)
+                            .allowsHitTesting(false)
+                    }
+                }
+                // The original page in the in-app browser, signed in, for anything iNUTT can't play itself.
+                if let page = current.pageURL {
+                    actionButton("safari", active: false) {
+                        browser = BrowserTarget(url: page, title: current.siteName)
+                    }
+                }
+                if let link = FeedEngine.shared.cachedResolution(current)?.url ?? current.mediaURL ?? current.pageURL {
+                    ShareLink(item: link) {
+                        actionIcon("square.and.arrow.up", active: false)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 14)
+        .padding(.top, 30)
+        .background(
+            LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        )
+    }
+
+    private var isVideo: Bool {
+        current.kind == .video || FeedEngine.shared.cachedResolution(current)?.kind == .video
+    }
+
+    private var player: AVPlayer? { Preloader.shared.existing(current.id) }
+
+    /// Skip, speed, A–B loop and AirPlay for the video on screen.
+    private var videoControls: some View {
+        HStack(spacing: 10) {
+            pill { seek(-10) } label: { Image(systemName: "gobackward.10") }
+            pill { seek(10) } label: { Image(systemName: "goforward.10") }
+            pill { cycleRate() } label: { Text(rateLabel) }
+            pill(active: loopA != nil) { tapLoop() } label: {
+                Text(loopB != nil ? "A–B ✕" : (loopA != nil ? "Set B" : "A–B"))
+            }
+            Spacer()
+            AirPlayButton().frame(width: 40, height: 40)
+        }
+        .font(.system(size: 15, weight: .semibold))
+    }
+
+    private func pill<L: View>(active: Bool = false, action: @escaping () -> Void, @ViewBuilder label: () -> L) -> some View {
+        Button(action: action) {
+            label()
+                .font(Theme.mono(13))
+                .foregroundStyle(active ? Theme.onGold : Theme.ink)
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(Capsule().fill(active ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(.ultraThinMaterial)))
+                .overlay(Capsule().strokeBorder(Theme.edge, lineWidth: 0.8))
+        }
+    }
+
+    private var rateLabel: String {
+        rate == Float(Int(rate)) ? "\(Int(rate))×" : String(format: "%g×", rate)
+    }
+
+    private func seek(_ by: Double) {
+        guard let p = player else { return }
+        let t = max(0, p.currentTime().seconds + by)
+        p.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func cycleRate() {
+        let steps: [Float] = [1, 1.25, 1.5, 2, 0.5, 0.75]
+        rate = steps[((steps.firstIndex(of: rate) ?? 0) + 1) % steps.count]
+        player?.defaultRate = rate
+        if player?.rate ?? 0 > 0 { player?.rate = rate }
+    }
+
+    /// First tap marks A, second marks B and loops between them, third clears.
+    private func tapLoop() {
+        guard let p = player else { return }
+        let now = p.currentTime().seconds
+        if loopB != nil || (loopA != nil && now <= (loopA ?? 0) + 0.3) {
+            clearLoop()
+        } else if let a = loopA {
+            loopB = now
+            p.seek(to: CMTime(seconds: a, preferredTimescale: 600))
+            loopTask?.cancel()
+            loopTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    guard let a = loopA, let b = loopB, let p = player else { continue }
+                    if p.currentTime().seconds >= b { _ = await p.seek(to: CMTime(seconds: a, preferredTimescale: 600)) }
+                }
+            }
+        } else {
+            loopA = now
+        }
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func clearLoop() {
+        loopTask?.cancel()
+        loopTask = nil
+        loopA = nil
+        loopB = nil
+    }
+
+    // MARK: Slideshow
+
+    private func toggleSlideshow() {
+        slideshow.toggle()
+        slideTask?.cancel()
+        guard slideshow else { return }
+        chrome = false
+        slideTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(max(2, settings.slideshowSeconds)) * 1_000_000_000)
+                guard !Task.isCancelled, slideshow else { return }
+                // A playing video moves on when it ends (or after three minutes at most).
+                if isVideo, let p = player, p.currentItem != nil {
+                    var waited = 0
+                    while !Task.isCancelled, slideshow, waited < 360, Preloader.shared.existing(current.id) === p {
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        waited += 1
+                    }
+                    if Preloader.shared.existing(current.id) !== p { continue }
+                }
+                advance()
+            }
+        }
+    }
+
+    private func advance() {
+        guard items.count > 1 else { return }
+        var next = index + 1
+        if settings.slideshowRandom {
+            repeat { next = Int.random(in: 0..<items.count) } while next == index
+        }
+        withAnimation(.easeInOut(duration: 0.35)) { index = next % items.count }
+    }
+
+    private func actionButton(_ symbol: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) { actionIcon(symbol, active: active) }
+    }
+
+    private func actionIcon(_ symbol: String, active: Bool) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(active ? Theme.onGold : Theme.ink)
+            .frame(width: 46, height: 46)
+            .background(
+                Circle().fill(active ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(.ultraThinMaterial))
+            )
+            .overlay(Circle().strokeBorder(Theme.edge, lineWidth: 0.8))
+    }
+}
+
+struct MediaPage: View {
+    let item: MediaItem
+    let isActive: Bool
+    @Binding var isZoomed: Bool
+    var onTap: () -> Void
+
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var viewer: ViewerState
+    @State private var resolved: ResolvedMedia?
+    @State private var image: UIImage?
+    @State private var player: AVPlayer?
+    @State private var failed = false
+    @State private var loopObserver: NSObjectProtocol?
+    @State private var timeObserver: Any?
+    @State private var observed: AVPlayer?
+
+    var body: some View {
+        ZStack {
+            if let r = resolved, r.isListing {
+                listingPanel
+            } else if let r = resolved {
+                switch r.kind {
+                case .video:
+                    if let player {
+                        // Leaves room for the viewer's top and bottom bars so player controls stay reachable.
+                        ZStack {
+                            if let t = item.thumbnailURL {
+                                RemoteImage(url: t, referer: item.referer, maxPixel: 600, contentMode: .fit, showsPlaceholder: false)
+                                    .opacity(0.5)
+                            }
+                            VideoPlayerView(player: player)
+                        }
+                        .padding(.top, 60)
+                        .padding(.bottom, 120)
+                    } else {
+                        placeholder
+                    }
+                case .image, .gif:
+                    if r.gallery.count > 1 {
+                        GalleryStack(urls: r.gallery, referer: r.referer, onTap: onTap)
+                    } else if let image {
+                        ZoomableImage(image: image, isZoomed: $isZoomed, onTap: onTap)
+                            .ignoresSafeArea()
+                    } else {
+                        placeholder
+                    }
+                }
+            } else if failed {
+                VStack(spacing: 14) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 34)).foregroundStyle(Theme.gold)
+                    Text("Couldn't load this content").font(Theme.text(15, .medium)).foregroundStyle(Theme.ink)
+                    Button("Try again") { Task { await load() } }.buttonStyle(GhostButtonStyle())
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .task { await load() }
+        .onChange(of: isActive) { active in
+            if active { if settings.autoplay { player?.play() } } else { player?.pause(); saveProgress() }
+        }
+        .onAppear {
+            if let p = player, p.currentItem != nil { attachLoop(p); attachProgress(p) }
+        }
+        .onDisappear {
+            player?.pause()
+            saveProgress()
+            detachLoop()
+            detachProgress()
+        }
+    }
+
+    /// Shown when the tapped tile is a category or album: it opens as a grid, not as one image.
+    private var listingPanel: some View {
+        ZStack {
+            if let t = item.thumbnailURL {
+                RemoteImage(url: t, referer: item.referer, maxPixel: 600, contentMode: .fit, showsPlaceholder: false)
+                    .opacity(0.25)
+            }
+            VStack(spacing: 14) {
+                Image(systemName: "square.grid.2x2.fill").font(.system(size: 34)).foregroundStyle(Theme.gold)
+                Text(item.displayTitle).font(Theme.display(18, .semibold)).foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center).lineLimit(2)
+                Text("This is a category with more content.").font(Theme.text(14)).foregroundStyle(Theme.body)
+                Button { viewer.openListing(item) } label: { Label("Open category", systemImage: "arrow.right") }
+                    .buttonStyle(GoldButtonStyle())
+            }
+            .padding(24)
+        }
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            // The grid thumbnail is already cached, so something is on screen instantly.
+            if let t = item.thumbnailURL {
+                RemoteImage(url: t, referer: item.referer, maxPixel: 600, contentMode: .fit, showsPlaceholder: false)
+            }
+            ProgressView().tint(Theme.gold).scaleEffect(1.1)
+                .padding(10)
+                .background(Circle().fill(.black.opacity(0.4)))
+        }
+        .onTapGesture(perform: onTap)
+    }
+
+    private func load() async {
+        failed = false
+        guard let r = await FeedEngine.shared.resolve(item) else { failed = true; return }
+        resolved = r
+        if r.isListing {
+            if isActive { viewer.openListing(item) }
+            return
+        }
+        switch r.kind {
+        case .video:
+            guard !Task.isCancelled else { return }
+            if player == nil || player?.currentItem == nil { player = Preloader.shared.player(for: item, media: r) }
+            if let p = player {
+                attachLoop(p)
+                // Carry on where you stopped last time.
+                if let at = ResumeStore.shared.position(for: item.id), p.currentTime().seconds < 2 {
+                    _ = await p.seek(to: CMTime(seconds: at, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+                attachProgress(p)
+            }
+            player?.currentItem?.preferredForwardBufferDuration = 0
+            if isActive && settings.autoplay { player?.play() }
+        case .image, .gif:
+            guard r.gallery.count <= 1 else { return }
+            let img = await ImagePipeline.shared.image(r.url, referer: r.referer, maxPixel: 3840, animated: r.kind == .gif)
+            if let img { image = img } else { failed = true; resolved = nil }
+        }
+    }
+
+    private func attachLoop(_ p: AVPlayer) {
+        guard settings.loopVideos, loopObserver == nil, let pi = p.currentItem else { return }
+        loopObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: pi, queue: .main) { [weak p] _ in
+            p?.seek(to: .zero)
+            p?.play()
+        }
+    }
+
+    /// Remembers the position every few seconds while the video plays.
+    private func attachProgress(_ p: AVPlayer) {
+        guard timeObserver == nil else { return }
+        let it = item
+        timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 4, preferredTimescale: 1), queue: .main) { [weak p] t in
+            guard let p, p.rate > 0 else { return }
+            let d = p.currentItem?.duration.seconds ?? 0
+            Task { @MainActor in ResumeStore.shared.update(it, seconds: t.seconds, duration: d) }
+        }
+        observed = p
+    }
+
+    private func detachProgress() {
+        if let o = timeObserver { observed?.removeTimeObserver(o) }
+        timeObserver = nil
+        observed = nil
+    }
+
+    private func saveProgress() {
+        guard let p = player, p.currentItem != nil else { return }
+        let t = p.currentTime().seconds
+        guard t > 5 else { return }
+        ResumeStore.shared.update(item, seconds: t, duration: p.currentItem?.duration.seconds ?? 0)
+    }
+
+    private func detachLoop() {
+        if let o = loopObserver { NotificationCenter.default.removeObserver(o) }
+        loopObserver = nil
+    }
+}
+
+struct GalleryStack: View {
+    let urls: [URL]
+    let referer: URL?
+    var onTap: () -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 6) {
+                ForEach(urls, id: \.self) { u in
+                    RemoteImage(url: u, referer: referer, maxPixel: 2400, contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 200)
+                }
+            }
+            .padding(.vertical, 70)
+        }
+        .onTapGesture(perform: onTap)
+    }
+}
+
+struct VideoPlayerView: UIViewControllerRepresentable {
+    let player: AVPlayer
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let vc = AVPlayerViewController()
+        vc.player = player
+        vc.allowsPictureInPicturePlayback = true
+        vc.canStartPictureInPictureAutomaticallyFromInline = true
+        vc.videoGravity = .resizeAspect
+        vc.view.backgroundColor = .clear
+        vc.updatesNowPlayingInfoCenter = true
+        return vc
+    }
+
+    func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {
+        if vc.player !== player { vc.player = player }
+    }
+}
+
+struct ZoomableImage: UIViewRepresentable {
+    let image: UIImage
+    @Binding var isZoomed: Bool
+    var onTap: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let sv = UIScrollView()
+        sv.minimumZoomScale = 1
+        sv.maximumZoomScale = 6
+        sv.bouncesZoom = true
+        sv.showsVerticalScrollIndicator = false
+        sv.showsHorizontalScrollIndicator = false
+        sv.contentInsetAdjustmentBehavior = .never
+        sv.backgroundColor = .clear
+        sv.delegate = context.coordinator
+
+        let iv = UIImageView(image: image)
+        iv.contentMode = .scaleAspectFit
+        iv.frame = sv.bounds
+        iv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        iv.isUserInteractionEnabled = true
+        sv.addSubview(iv)
+        context.coordinator.imageView = iv
+
+        let double = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTap(_:)))
+        double.numberOfTapsRequired = 2
+        sv.addGestureRecognizer(double)
+        let single = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.singleTap))
+        single.require(toFail: double)
+        sv.addGestureRecognizer(single)
+        return sv
+    }
+
+    func updateUIView(_ sv: UIScrollView, context: Context) {
+        context.coordinator.parent = self
+        if context.coordinator.imageView?.image !== image {
+            context.coordinator.imageView?.image = image
+            sv.setZoomScale(1, animated: false)
+        }
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        var parent: ZoomableImage
+        weak var imageView: UIImageView?
+
+        init(_ parent: ZoomableImage) { self.parent = parent }
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            let z = scrollView.zoomScale > 1.01
+            if z != parent.isZoomed { DispatchQueue.main.async { self.parent.isZoomed = z } }
+        }
+
+        @objc func singleTap() { parent.onTap() }
+
+        @objc func doubleTap(_ g: UITapGestureRecognizer) {
+            guard let sv = g.view as? UIScrollView else { return }
+            if sv.zoomScale > 1.01 {
+                sv.setZoomScale(1, animated: true)
+            } else {
+                let p = g.location(in: imageView)
+                let scale: CGFloat = 2.6
+                let size = CGSize(width: sv.bounds.width / scale, height: sv.bounds.height / scale)
+                sv.zoom(to: CGRect(x: p.x - size.width / 2, y: p.y - size.height / 2, width: size.width, height: size.height), animated: true)
+            }
+        }
+    }
+}
+
+struct AirPlayButton: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let v = AVRoutePickerView()
+        v.prioritizesVideoDevices = true
+        v.tintColor = .white
+        v.activeTintColor = UIColor(Theme.gold)
+        v.backgroundColor = .clear
+        return v
+    }
+    func updateUIView(_ v: AVRoutePickerView, context: Context) {}
+}
+
+/// More like this, from the item's own page and the same site.
+struct SimilarSheet: View {
+    let item: MediaItem
+    var onPick: ([MediaItem], Int) -> Void
+    @State private var items: [MediaItem]?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                if let items {
+                    if items.isEmpty {
+                        EmptyStateView(symbol: "rectangle.stack", title: "Nothing similar found",
+                                       message: "This page doesn't link to related content.")
+                            .padding(16)
+                    } else {
+                        let a: CGFloat = item.kind == .video ? 16 / 11 : 4 / 5
+                        LazyVGrid(columns: MediaGrid.columns, spacing: 12) {
+                            ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
+                                Button { onPick(items, i) } label: { MediaCard(item: it, aspect: a) }
+                                    .buttonStyle(CardPressStyle())
+                            }
+                        }
+                        .padding(16)
+                    }
+                } else {
+                    ProgressView().tint(Theme.gold).frame(maxWidth: .infinity).padding(40)
+                }
+            }
+            .background(NightSky())
+            .navigationTitle("Similar")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .preferredColorScheme(.dark)
+        .task { items = await FeedEngine.shared.related(item) }
+    }
+}
