@@ -714,9 +714,11 @@ class _SyncSettingsViewState extends State<SyncSettingsView> {
             Section(
               title: 'Passphrase',
               footer:
-                  'Sites, forums, favorites, collections and Watch later are saved a moment after you change them and merged with your '
-                  'other devices; removing something removes it everywhere. Other devices\' changes arrive within a minute while the app '
-                  'is open. The file is encrypted with this passphrase (at least 6 characters), which must be the same on every device '
+                  'Everything is synced: sites, forums, favorites, collections, Watch later, history, searches, blocked words, Continue '
+                  'watching, Picked for you and settings (lock settings stay per device), plus the vault when you use GitHub. Changes go '
+                  'out a moment after you make them (history within half a minute) and merge with your other iPhone, Android and Windows '
+                  'devices; removing something removes it everywhere. Other devices\' changes arrive within a minute while the app is '
+                  'open. Everything is encrypted with this passphrase (at least 6 characters), which must be the same on every device '
                   'and never leaves them.',
               children: [
                 Padding(
@@ -746,7 +748,7 @@ class _SyncSettingsViewState extends State<SyncSettingsView> {
               children: [
                 Row2(
                   icon: Icons.sync_rounded,
-                  title: m.syncing ? 'Syncing…' : 'Sync now',
+                  title: m.syncing ? (m.progress ?? 'Syncing…') : 'Sync now',
                   value: last == null ? 'Never' : '${last.hour.toString().padLeft(2, '0')}:${last.minute.toString().padLeft(2, '0')}',
                   onTap: m.isConfigured && !m.syncing ? m.sync : null,
                 ),

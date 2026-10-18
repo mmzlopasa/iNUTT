@@ -106,6 +106,20 @@ class ResumeStore extends ChangeNotifier {
     _changed();
   }
 
+  Map<String, ResumePoint> get points => Map.unmodifiable(_points);
+
+  /// Used by sync: resume points as merged with your other devices.
+  void replaceAll(Map<String, ResumePoint> list) {
+    final same =
+        list.length == _points.length &&
+        list.entries.every((e) => _points[e.key]?.updatedAt == e.value.updatedAt && _points[e.key]?.seconds == e.value.seconds);
+    if (same) return;
+    _points
+      ..clear()
+      ..addAll(list);
+    _changed();
+  }
+
   /// Screens under the viewer catch up once it closes.
   void flush() {
     if (!_pending) return;
@@ -643,6 +657,17 @@ class Taste extends ChangeNotifier {
     }
     scored.sort((a, b) => b.$2.compareTo(a.$2));
     return scored.take(limit).map((e) => e.$1).toList();
+  }
+
+  Map<String, double> get weights => Map.unmodifiable(_weights);
+  int get signals => _signals;
+
+  /// Used by sync: what was learned on your other devices.
+  void replace(Map<String, double> w, int s) {
+    if (s == _signals && mapEquals(w, _weights)) return;
+    _weights = Map.of(w);
+    _signals = s;
+    Disk.save('taste.json', {'weights': _weights, 'signals': _signals});
   }
 
   void reset() {

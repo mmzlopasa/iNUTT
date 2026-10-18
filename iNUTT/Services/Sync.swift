@@ -462,7 +462,6 @@ final class SyncManager: ObservableObject {
             progress = nil
             let local = Set(Vault.shared.entries.map(\.syncKey))
             vaultDownloads = newVault.filter { !local.contains($0.id) }
-            for e in Vault.shared.entries where !merged.contains("v:" + e.syncKey) { Vault.shared.delete(e) }
         }
 
         applying = true
@@ -477,6 +476,9 @@ final class SyncManager: ObservableObject {
         ResumeStore.shared.replaceAll(newResume)
         taste.replace(weights: newTaste.weights, signals: newTaste.signals)
         if adopt { settings.apply(newSettings) }
+        if syncsVault {
+            for e in Vault.shared.entries where !merged.contains("v:" + e.syncKey) { Vault.shared.delete(e) }
+        }
         if let data = try? JSONEncoder().encode(newSettings.withoutTime) { d.set(data, forKey: "syncSettings") }
         d.set(newSettings.at ?? 0, forKey: "syncSettingsAt")
         applying = false
@@ -517,11 +519,14 @@ final class SyncManager: ObservableObject {
 
         if !vaultDownloads.isEmpty, let repo = githubRepo, let token = githubToken {
             let key = await key(pass, salt: salt)
+            var failed: [String] = []
             for (n, v) in vaultDownloads.enumerated() {
                 progress = "Downloading vault \(n + 1) of \(vaultDownloads.count)…"
-                try? await downloadVault(v, key: key, repo: repo, token: token)
+                do { try await downloadVault(v, key: key, repo: repo, token: token) } catch { failed.append("v:" + v.id) }
             }
             progress = nil
+            // A file that didn't come down is fetched next time, not taken as removed here.
+            if !failed.isEmpty { d.set(Array(state.subtracting(failed)), forKey: "syncBase") }
         }
     }
 

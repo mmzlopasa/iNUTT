@@ -20,6 +20,11 @@ class VaultEntry {
   final Uri? thumbnailUrl;
   final DateTime addedAt;
 
+  /// The same file's name on every device, set when it came from another device through sync.
+  final String? syncId;
+
+  String get syncKey => syncId ?? id;
+
   VaultEntry({
     required this.id,
     required this.title,
@@ -29,6 +34,7 @@ class VaultEntry {
     required this.size,
     this.thumbnailUrl,
     DateTime? addedAt,
+    this.syncId,
   }) : addedAt = addedAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
@@ -40,6 +46,7 @@ class VaultEntry {
     'size': size,
     'thumb': thumbnailUrl?.toString(),
     'addedAt': addedAt.millisecondsSinceEpoch,
+    'syncId': ?syncId,
   };
 
   factory VaultEntry.fromJson(Map<String, dynamic> j) => VaultEntry(
@@ -51,6 +58,7 @@ class VaultEntry {
     size: j['size'] as int? ?? 0,
     thumbnailUrl: Uri.tryParse(j['thumb'] as String? ?? ''),
     addedAt: DateTime.fromMillisecondsSinceEpoch(j['addedAt'] as int? ?? 0),
+    syncId: j['syncId'] as String?,
   );
 }
 
@@ -114,6 +122,34 @@ class Vault extends ChangeNotifier {
         thumbnailUrl: item.thumbnailUrl,
       ),
     );
+    _save();
+  }
+
+  /// Used by sync: a file that came from another device, already decrypted to `plain`.
+  Future<void> addSynced(File plain, VaultEntry e) async {
+    await Directory(_dir).create(recursive: true);
+    final id = hashKey('${DateTime.now().microsecondsSinceEpoch}${e.syncKey}');
+    final dest = '$_dir${Platform.pathSeparator}$id';
+    final key = await _key();
+    final src = plain.path;
+    final size = await Isolate.run(() => _seal(src, dest, key));
+    try {
+      await plain.delete();
+    } catch (_) {}
+    entries.add(
+      VaultEntry(
+        id: id,
+        title: e.title,
+        siteName: e.siteName,
+        kind: e.kind,
+        ext: e.ext,
+        size: size,
+        thumbnailUrl: e.thumbnailUrl,
+        addedAt: e.addedAt,
+        syncId: e.syncKey,
+      ),
+    );
+    entries.sort((a, b) => b.addedAt.compareTo(a.addedAt));
     _save();
   }
 

@@ -261,6 +261,18 @@ class Library extends ChangeNotifier {
     _saveHistory();
   }
 
+  /// Used by sync: history as merged with your other devices.
+  void replaceHistory(List<HistoryEntry> list) {
+    final same = listEquals(list.map((e) => e.item.id).toList(), history.map((e) => e.item.id).toList());
+    if (same && list.firstOrNull?.viewedAt == history.firstOrNull?.viewedAt) return;
+    history = list;
+    _seenIds
+      ..clear()
+      ..addAll(list.map((e) => e.item.id));
+    favoritesVersion.value++;
+    _saveHistory();
+  }
+
   void clearHistory() {
     history = [];
     _seenIds.clear();
@@ -364,8 +376,10 @@ class CollectionStore extends ChangeNotifier {
 
   /// Used by sync: the collections as merged with your other devices.
   void replaceAll(List<MediaCollection> list) {
-    final same = list.length == collections.length &&
-        Iterable<int>.generate(list.length).every((i) => list[i].name == collections[i].name && _sameIds(list[i].items, collections[i].items));
+    final same =
+        list.length == collections.length &&
+        Iterable<int>.generate(list.length)
+            .every((i) => list[i].name == collections[i].name && _sameIds(list[i].items, collections[i].items));
     if (same) return;
     collections = list;
     _save();
